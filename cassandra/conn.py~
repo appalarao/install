@@ -1,0 +1,25 @@
+import logging
+
+log = logging.getLogger()
+log.setLevel('DEBUG')
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+log.addHandler(handler)
+
+from cassandra import ConsistencyLevel
+from cassandra.cluster import Cluster
+from cassandra.query import SimpleStatement
+
+KEYSPACE = "testkeyspace"
+
+def main():
+    cluster = Cluster(['173.231.179.142'])
+    session = cluster.connect()
+
+    rows = session.execute("SELECT * FROM im_cass_mesh.bheri_tbl")
+    if KEYSPACE in [row[0] for row in rows]:
+        session.execute("val is " + KEYSPACE)
+
+if __name__ == "__main__":
+    main()
+

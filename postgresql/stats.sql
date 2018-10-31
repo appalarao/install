@@ -1,0 +1,147 @@
+--from disk
+Buffers: shared read
+
+
+--from cache
+Buffers: shared hit
+
+explain (analyze,buffers,verbose) 
+
+
+
+same indexes on both the mviews
+
+
+
+
+
+enq=# explain (analyze,buffers,verbose) select PC_ITEM_NAME from pc_item_mv2 where PC_ITEM_DISPLAY_ID=19120019988;
+                                                               QUERY PLAN                                                               
+----------------------------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=1000.00..2960182.40 rows=1 width=21) (actual time=3066.546..3066.549 rows=1 loops=1)
+   Output: pc_item_name
+   Workers Planned: 8
+   Workers Launched: 8
+   Buffers: shared hit=313 read=321945
+   ->  Parallel Seq Scan on public.pc_item_mv2  (cost=0.00..2959182.30 rows=1 width=21) (actual time=2996.317..3063.328 rows=0 loops=9)
+         Output: pc_item_name
+         Filter: (pc_item_mv2.pc_item_display_id = '19120019988'::numeric)
+         Rows Removed by Filter: 10775061
+         Buffers: shared hit=2400 read=2805258
+         Worker 0: actual time=2459.642..3062.740 rows=1 loops=1
+           Buffers: shared hit=267 read=315755
+         Worker 1: actual time=3062.785..3062.785 rows=0 loops=1
+           Buffers: shared hit=276 read=316504
+         Worker 2: actual time=3062.792..3062.792 rows=0 loops=1
+           Buffers: shared hit=264 read=315463
+         Worker 3: actual time=3062.879..3062.879 rows=0 loops=1
+           Buffers: shared hit=210 read=294436
+         Worker 4: actual time=3062.677..3062.677 rows=0 loops=1
+           Buffers: shared hit=269 read=316812
+         Worker 5: actual time=3062.984..3062.984 rows=0 loops=1
+           Buffers: shared hit=267 read=290430
+         Worker 6: actual time=3063.400..3063.400 rows=0 loops=1
+           Buffers: shared hit=272 read=317445
+         Worker 7: actual time=3063.457..3063.457 rows=0 loops=1
+           Buffers: shared hit=262 read=316468
+ Planning time: 0.050 ms
+ Execution time: 3079.260 ms
+(28 rows)
+
+Time: 3079.664 ms (00:03.080)
+enq=# explain (analyze,buffers,verbose) select PC_ITEM_NAME from pc_item_mv1 where PC_ITEM_DISPLAY_ID=19120019988;
+                                                                  QUERY PLAN                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_pc_item_item_disp_id on public.pc_item_mv1  (cost=0.57..2.79 rows=1 width=21) (actual time=0.036..0.037 rows=1 loops=1)
+   Output: pc_item_name
+   Index Cond: (pc_item_mv1.pc_item_display_id = '19120019988'::numeric)
+   Buffers: shared hit=5
+ Planning time: 0.730 ms
+ Execution time: 0.047 ms
+(6 rows)
+
+Time: 1.056 ms
+enq=# 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-----------------------------------------------------
+conflict with recovery:
+-----------------------
+max_standby_streaming_delay   -- determines how long the standby server should wait before canceling standby queries that conflict with about-to-be-applied WAL entries
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+CREATE EXTENSION pg_buffercache;
+
+SELECT c.relname, count(*) AS buffers
+             FROM pg_buffercache b INNER JOIN pg_class c
+             ON b.relfilenode = pg_relation_filenode(c.oid) AND
+                b.reldatabase IN (0, (SELECT oid FROM pg_database
+                                      WHERE datname = current_database()))
+             GROUP BY c.relname
+             ORDER BY 2 DESC
+             LIMIT 10;
+
+
+pg_stat_stements
+-----------------
+
+shared_preload_libraries = 'pg_stat_statements'
+
+pg_stat_statements.max=10000
+pg_stat_statements.track=all
+
+create extension pg_stat_statements;
+
+
+SELECT query, calls, total_time, rows, 100.0 * shared_blks_hit /
+               nullif(shared_blks_hit + shared_blks_read, 0) AS hit_percent
+          FROM pg_stat_statements ORDER BY total_time DESC LIMIT 5;
+
+
+SELECT query FROM pg_stat_statements ORDER BY total_time DESC LIMIT 5;
+
+
+pg_stat_statements_reset()
+
+pg_stat_plans:
+=============
+
+shared_preload_libraries = 'pg_stat_plans'
+
+pg_stat_plans.max = 10000
+pg_stat_plans.track = all
+
+
+pg_stat_plans_reset()
+
+yum install postgresql-9.6.8 pgstatplans
+
+combine both :
+---------------
+shared_preload_libraries = 'pg_stat_statements pg_stat_plans'
+pg_stat_statements.max=10000
+pg_stat_statements.track=all
+
+pg_stat_plans.max = 10000
+pg_stat_plans.track = all
+
+
+work_mem
+checkpoint_segments
+checkpoint_timeout
+
+

@@ -1,0 +1,190 @@
+master_node:
+yum install repmgr10
+
+
+
+change postgresql.conf
+
+--------------------------------------
+listen_addresses = '*'
+max_connections = 200
+shared_buffers = 512MB
+effective_cache_size = 1536MB
+work_mem = 2621kB
+maintenance_work_mem = 128MB
+default_statistics_target = 100
+shared_preload_libraries = 'repmgr_funcs'
+wal_level = hot_standby
+wal_buffers = 16MB
+checkpoint_segments = 32
+checkpoint_completion_target = 0.7
+archive_mode = on
+archive_command = 'cd .'
+max_wal_senders = 1
+wal_keep_segments = 5000
+wal_sender_timeout = 1s
+hot_standby = on
+log_destination = 'stderr'
+logging_collector = on
+log_directory = 'pg_log' 
+log_filename = 'postgresql-%a.log' 
+log_truncate_on_rotation = on
+log_rotation_age = 1d
+log_rotation_size = 0
+log_min_duration_statement = 0
+log_checkpoints = on
+log_connections = on
+log_disconnections = on
+log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d '
+log_lock_waits = on
+log_statement = 'all'
+log_temp_files = 0
+datestyle = 'iso, mdy'
+timezone = 'Europe/Brussels'
+lc_messages = 'en_US.UTF-8'
+lc_monetary = 'en_US.UTF-8'
+lc_numeric = 'en_US.UTF-8'
+lc_time = 'en_US.UTF-8'
+default_text_search_config = 'pg_catalog.english'
+
+---------------------------------------------
+sudo su - postgres -c "mkdir -p /var/lib/pgsql/repmgr/"
+
+
+
+instance-1:
+ssh srihari@35.231.238.105
+private-ip 10.142.0.2
+
+instance-2:
+ssh srihari@35.237.83.130
+
+private-ip 10.142.0.3
+
+
+
+
+vi /var/lib/pgsql/repmgr/repmgr.conf
+
+cluster=db_cluster
+node=1
+node_name=10.142.0.2
+conninfo='host=10.142.0.2 user=repmgr dbname=repmgr'
+pg_bindir=/usr/pgsql-10/bin/
+master_response_timeout=5
+reconnect_attempts=2
+reconnect_interval=2
+failover=manual
+promote_command='/usr/pgsql-10/bin/repmgr standby promote -f /var/lib/pgsql/repmgr/repmgr.conf'
+follow_command='/usr/pgsql-10/bin/repmgr standby follow -f /var/lib/pgsql/repmgr/repmgr.conf'
+
+
+sudo chown postgres:postgres /var/lib/pgsql/repmgr/repmgr.conf
+
+#psql
+postgres=# CREATE ROLE pgpool SUPERUSER CREATEDB CREATEROLE INHERIT REPLICATION LOGIN ENCRYPTED PASSWORD 'secret';
+CREATE ROLE
+postgres=# CREATE USER repmgr SUPERUSER LOGIN ENCRYPTED PASSWORD 'secret';
+CREATE ROLE
+postgres=# CREATE DATABASE repmgr OWNER repmgr;
+CREATE DATABASE
+
+===========================================================
+
+ sudo su - postgres
+
+/usr/pgsql-10/bin/repmgr -f /var/lib/pgsql/repmgr/repmgr.conf master register
+
+[2015-06-04 11:48:12] [NOTICE] master node correctly registered for cluster db_cluster with id 1 (conninfo: host=pgdb1 user=repmgr dbname=repmgr)
+
+#slave-node
+-----------
+yum install repmgr10
+sudo su - postgres -c "mkdir -p /var/lib/pgsql/repmgr/"
+
+vi /var/lib/pgsql/repmgr/repmgr.conf
+
+cluster=db_cluster
+node=2
+node_name=pgdb2
+conninfo='host=pgdb2 user=repmgr dbname=repmgr'
+pg_bindir=/usr/pgsql-9.4/bin/
+master_response_timeout=5
+reconnect_attempts=2
+reconnect_interval=2
+failover=manual
+promote_command='/usr/pgsql-9.4/bin/repmgr standby promote -f /var/lib/pgsql/repmgr/repmgr.conf'
+follow_command='/usr/pgsql-9.4/bin/repmgr standby follow -f /var/lib/pgsql/repmgr/repmgr.conf'
+
+
+sudo chown postgres:postgres /var/lib/pgsql/repmgr/repmgr.conf
+
+
+/usr/pgsql-10/bin/repmgr -f /var/lib/pgsql/repmgr/repmgr.conf standby register
+
+
+
+vi pg_pool.conf
+
+
+listen_addresses = '*'
+port = 5432
+backend_hostname0 = 'pgdb1'
+backend_port0 = 5432
+backend_weight0 = 1
+backend_data_directory0 = '/var/lib/pgsql/10/data'
+backend_flag0 = 'ALLOW_TO_FAILOVER'
+backend_hostname1 = 'pgdb2'
+backend_port1 = 5432
+backend_weight1 = 1
+backend_data_directory1 = '/var/lib/pgsql/10/data'
+backend_flag1 = 'ALLOW_TO_FAILOVER'
+enable_pool_hba = on
+pid_file_name = '/var/run/pgpool-II-94/pgpool.pid'
+sr_check_user = 'pgpool'
+sr_check_password = 'secret'
+health_check_period = 10
+health_check_user = 'pgpool'
+health_check_password = 'secret'
+failover_command = '/etc/pgpool-II-94/failover.sh %d %H'  
+recovery_user = 'pgpool'
+recovery_password = 'secret'
+recovery_1st_stage_command = 'basebackup.sh'
+
+
+
+vi /etc/pgpool-II-94/failover.sh:
+
+#!/bin/sh
+failed_node=$1
+new_master=$2
+(
+date
+echo "Failed node: $failed_node"
+set -x
+/usr/bin/ssh -T -l postgres $new_master "/usr/pgsql-10/bin/repmgr -f /var/lib/pgsql/repmgr/repmgr.conf standby promote 2>/dev/null 1>/dev/null <&-"
+exit 0;
+) 2>&1 | tee -a /tmp/pgpool_failover.log
+==============================================================
+sudo chmod 755 /etc/pgpool-II-94/failover.sh
+
+vi /etc/pgpool-II-94/pool_hba.conf
+
+ TYPE  DATABASE    USER        CIDR-ADDRESS          METHOD
+local   all         all                               trust
+host    all         all         127.0.0.1/32          trust
+host    all         all         ::1/128               trust
+host    all         all         0.0.0.0/0             md5
+
+sudo touch /etc/pgpool-II-94/pool_passwd
+
+sudo chown postgres:postgres /etc/pgpool-II-10/pool_passwd
+
+sudo su - postgres -c "pg_md5 -m -u pgpool secret"
+
+#check
+echo "pgpool:$(pg_md5 secret)"|sudo tee /etc/pgpool-II-94/pcp.conf
+pgpool:5ebe2294ecd0e0f08eab7690d2a6ee69
+
+
+psql -U pgpool --host pgpool --dbname postgres -c "\list"

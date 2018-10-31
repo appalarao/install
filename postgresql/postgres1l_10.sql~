@@ -1,0 +1,51 @@
+yum install https://download.postgresql.org/pub/repos/yum/10/redhat/rhel-7-x86_64/pgdg-centos10-10-2.noarch.rpm
+
+yum install postgresql10 postgresql10-server postgresql10-contrib
+
+
+su - postgres -c /usr/pgsql-10/bin/initdb
+
+su - postgres -c /usr/pgsql-10/bin/postgresql-10-setup initdb
+
+
+
+su - postgres
+
+/usr/pgsql-10/bin/pg_ctl -D /var/lib/pgsql/10/data -l /var/lib/pgsql/10/data/logfile start
+
+systemctl start postgresql-10.service
+ systemctl start postgresql-9.6.service
+
+systemctl start postgresql-10
+
+
+yum erase postgresql10*
+or 
+dnf remove postgresql96* for Fedora 23+.
+
+
+
+chkconfig postgresql on
+
+
+
+yum install https://download.postgresql.org/pub/repos/yum/10/redhat/rhel-7-x86_64/pgdg-centos10-10-2.noarch.rpm
+
+yum install postgresql10-server postgresql10 postgresql10-contrib
+
+cd /var/lib/pgsql/10
+
+rmdir data
+
+mkdir /pg_data
+
+chown postgres:postgres /pg_data
+
+ln -s /pg_data data
+
+chown -R postgres:postgres data
+
+--run as root
+/usr/pgsql-10/bin/postgresql-10-setup initdb
+
+service postgresql-10 start

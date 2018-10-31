@@ -1,0 +1,2057 @@
+create or replace function SP_QUERY_STATS
+(
+		IN_MODULE_LIST IN character varying DEFAULT NULL,
+		IN_CUSTOMER_TYPE IN character varying DEFAULT NULL,
+		IN_START_DATE IN timestamp without time zone DEFAULT NULL,
+		IN_END_DATE IN timestamp without time zone  DEFAULT NULL,
+		IN_NUMBER_OF_DAYS IN numeric DEFAULT 15,
+		IN_DAY_OR_MONTH IN numeric DEFAULT 1,
+		IN_REGION_TYPE IN character varying DEFAULT NULL,
+		IN_INDIAN IN numeric DEFAULT NULL, --0 For Indian else Foreign
+		IN_COUNT_UNQ_RECEIVER IN numeric DEFAULT 0,
+		IN_COUNT_UNQ_SENDER IN numeric DEFAULT 0,
+		IN_QUERY_TYPE IN VARCHAR DEFAULT NULL, --Null => All 0=> Web 1=> Call 2=> SMS 3=> SMS_N,
+		IN_SEARCH_PARAM IN numeric DEFAULT NULL,
+		IN_SERVICE_WISE IN numeric DEFAULT 0,
+		IN_SERVICE_ID IN character varying DEFAULT NULL,
+		IN_ENQ_CNT_FROM In numeric Default Null,
+		IN_ENQ_CNT_TO IN numeric DEFAULT NULL
+		--OUT_CUR OUT SYS_REFCURSOR
+) returns text as
+$$
+declare
+OUT_CUR text;
+PARAM_LIST character varying(4000);
+BEGIN
+PARAM_LIST:='MODULE =>'||IN_MODULE_LIST||' CSTTYPE=>'||IN_CUSTOMER_TYPE||' REGION_TYPE=>'||IN_REGION_TYPE||' START DATE=>'||IN_START_DATE||' END DATE=>'||IN_END_DATE||' NO OF DAYS=>'||IN_NUMBER_OF_DAYS||' DAY OR MONTH=>'||IN_DAY_OR_MONTH||' IN_QUERY_TYPE=>'||IN_QUERY_TYPE;
+--SEND_MAIL('abhinav.jaiswar@indiamart.com','abhinav.jaiswar@indiamart.com','Param List',PARAM_LIST,'');
+
+
+	IF IN_START_DATE IS NULL AND IN_END_DATE IS NULL THEN
+		IF IN_COUNT_UNQ_SENDER=1 THEN
+			--bheri OPEN OUT_CUR FOR
+			  SELECT
+				(
+				CASE WHEN IN_SERVICE_WISE=0 THEN
+					
+					(
+					case when (SELECT GL_MODULE_NAME FROM GL_MODULE glModule WHERE GL_MODULE_ID=QUERY_MODID) is NULL then coalesce(QUERY_MODID,'Free') else
+						(SELECT GL_MODULE_NAME FROM GL_MODULE glModule WHERE GL_MODULE_ID=QUERY_MODID)||' ('||QUERY_MODID||')'
+					end )
+					WHEN IN_SERVICE_WISE=1 THEN
+						(SELECT coalesce(SERVICE_SHORTNAME,SERVICE_NAME) FROM SERVICE WHERE SERVICE_ID=QUERY_MODID)
+					WHEN IN_SERVICE_WISE=2 THEN
+						(SELECT coalesce(SERVICE_SHORTNAME,SERVICE_NAME) FROM SERVICE WHERE SERVICE_ID=DIR_QUERY_SERVICE_ID)||'-'||QUERY_MODID
+				END
+				) MOD_NAME,
+				COUNT(DISTINCT FK_GLUSR_USR_ID) QUERY_ID,
+				(CASE WHEN IN_SERVICE_WISE=2 THEN DIR_QUERY_SERVICE_ID ELSE '-1'  END)DIR_QUERY_SERVICE_ID,
+				NULL,NULL,NULL,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 0 then FK_GLUSR_USR_ID else NULL end) else NULL end)) CNTWEBINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 2 then FK_GLUSR_USR_ID else NULL end) else NULL end)) CNTCALLINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 1 then FK_GLUSR_USR_ID else NULL end) else NULL end)) CNTSMSINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 0 then FK_GLUSR_USR_ID else NULL end) else NULL end)) CNTWEBFOREIGN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 2 then FK_GLUSR_USR_ID else NULL end) else NULL end)) CNTCALLFOREIGN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 1 then FK_GLUSR_USR_ID else NULL end) else NULL end)) CNTSMSFOREIGN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then FK_GLUSR_USR_ID else NULL end)) CNTINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then FK_GLUSR_USR_ID else NULL end)) CNTFOREIGN ,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 3 then FK_GLUSR_USR_ID else NULL end) else NULL end)) CNTSMSNINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 3 then FK_GLUSR_USR_ID else NULL end)else NULL end)) CNTSMSNFOREIGN,
+				MAX(UNQ_ENQ_SND_CNT) UNQ_ENQ_SND_CNT
+		  FROM
+		  (
+      Select Query_Id, Fk_Glusr_Usr_Id, Query_Rcv_Glusr_Usr_Id, Query_Modid, 
+      Dir_Query_Custtype_Weight, Query_Type_Flag, Date_R, Query_Isindian, Dir_Query_Service_Id, COUNT(DISTINCT FK_GLUSR_USR_ID) OVER () UNQ_ENQ_SND_CNT
+      FROM
+      (
+			SELECT
+					QUERY_ID,coalesce(TO_CHAR(FK_GLUSR_USR_ID),S_MOBILE)FK_GLUSR_USR_ID,QUERY_RCV_GLUSR_USR_ID,
+					(case IN_SERVICE_WISE when 0 then QUERY_MODID when 1 then DIR_QUERY_SERVICE_ID::text else QUERY_MODID end)QUERY_MODID,
+					DIR_QUERY_CUSTTYPE_WEIGHT,0 QUERY_TYPE_FLAG,DATE_R,DIR_QUERY_IS_INDIAN QUERY_ISINDIAN,
+					(case IN_SERVICE_WISE when 0 then NULL else DIR_QUERY_SERVICE_ID end)DIR_QUERY_SERVICE_ID
+			FROM
+					DIR_QUERY
+			WHERE
+					date(DATE_R) BETWEEN
+				    (CASE WHEN IN_DAY_OR_MONTH =1 THEN date(now())-IN_NUMBER_OF_DAYS WHEN IN_DAY_OR_MONTH=2 THEN ADD_MONTHS(current_date,-IN_NUMBER_OF_DAYS)  END)
+					AND date(now())
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE QUERY_MODID END) IN
+					(
+						/*SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST FROM DUAL)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						*/
+
+						select MODULE_ID from (
+						with recursive fun (rownum) as
+						(
+							select 1 rownum,SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,0)+1,(INSTR(MY_MODULE_LIST,',',1,0+1)-INSTR(MY_MODULE_LIST,',',1,0))-1)MODULE_ID
+							from (Select (Case When IN_MODULE_LIST Is Not Null Then ','||IN_MODULE_LIST||',' Else '' End) ) tbl
+							union all
+							select rownum+1, SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,rownum)+1,(INSTR(MY_MODULE_LIST,',',1,rownum+1)-INSTR	
+								(MY_MODULE_LIST,',',1,rownum))-1)MODULE_ID
+							from fun
+							where rownum < Length(MY_MODULE_LIST)-Length(Replace(MY_MODULE_LIST,',',''))
+						)
+						select MODULE_ID from fun where rownum!=1
+						)tbl
+						UNION
+						SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+/*
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List )
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+*/
+
+
+
+						select MODULE_ID from (
+						with recursive fun (rownum) as
+						(
+							select 1 rownum,SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,0)+1,(INSTR(MY_MODULE_LIST,',',1,0+1)-INSTR(MY_MODULE_LIST,',',1,0))-1)MODULE_ID
+							from (Select (Case When IN_MODULE_LIST Is Not Null Then ','||IN_MODULE_LIST||',' Else '' End) ) tbl
+							union all
+							select rownum+1, SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,rownum)+1,(INSTR(MY_MODULE_LIST,',',1,rownum+1)-INSTR	
+								(MY_MODULE_LIST,',',1,rownum))-1)MODULE_ID
+							from fun
+							where rownum < Length(MY_MODULE_LIST)-Length(Replace(MY_MODULE_LIST,',',''))
+						)
+						select MODULE_ID from fun
+						where rownum!=1
+						)tbl
+
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE DIR_QUERY_CUSTTYPE_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+
+
+/*							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR		
+								(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE FROM DUAL)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+
+*/
+
+
+
+select CUST_ID from (
+	with recursive fun (rownum) as
+	(
+		select 1 rownum,TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,0)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,0+1)-INSTR(MY_CUSTOMER_TYPE,',',1,0))-1))CUST_ID
+		from (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE )tbl
+		union all
+		select rownum+1,TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+		from fun where rownum < (LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+	) select CUST_ID from fun where rownum !=1
+)tbl
+
+						 )tbl WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(DIR_QUERY_SNDR_COUNTRY_ISO) END) IN
+						(
+						/*
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE )
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						*/
+						select REGN from (
+						with recursive fun (rownum) as
+						(
+							select 1 rownum, SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,0)+1,(INSTR(MY_REGION_TYPE,',',1,0+1)-INSTR(MY_REGION_TYPE,',',1,0))-1)REGN
+							from (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE ) tbl
+							union all
+							select rownum+1, SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+							from fun where rownum < (LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						)
+						select REGN from fun
+						)tbl
+
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+
+	/*					
+					AND (case IN_INDIAN when NULL then -999 else coalesce(DIR_QUERY_IS_INDIAN,0) end)=(case when IN_INDIAN is NULL then -999 when 0 then -1 else 0 end)
+					AND DECODE (IN_SEARCH_PARAM,0,DECODE(INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp'),0,0,1),
+          1,DECODE(INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp'),0,1,0),
+          2,DECODE(INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile'),0,0,1),
+          3,DECODE(INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile'),0,1,0),1) = 1
+					AND DECODE(coalesce(IN_QUERY_TYPE,-9),0,1,-9,1,0)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE DIR_QUERY_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+
+*/
+
+
+AND (case when IN_INDIAN is NULL then -999 else coalesce(DIR_QUERY_IS_INDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when 0 then -1 else 1 end)
+					AND (case IN_SEARCH_PARAM when 0 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 0 else 1 end)
+          when 1 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 1 else 0 end)
+          when 2 then (case INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile') when 0 then 0 else 1 end)
+          when 3 then (case INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile') when 0 then 1 else 0 end) else 1 end) = 1
+					AND (case coalesce(IN_QUERY_TYPE,-9) when 0 then 1 when -9 then 1 else 0 end)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE DIR_QUERY_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+		UNION ALL
+			SELECT
+				IIL_ENQUIRY_SMS_ID,coalesce(TO_CHAR(IIL_ENQUIRY_SENDER_GLID),IIL_ENQUIRY_SENDER_MOBILE),IIL_ENQUIRY_RECV_GLID,
+				(case IN_SERVICE_WISE when 0 then IIL_ENQUIRY_SMS_MODID when 1 then IIL_ENQUIRY_SMS_SERVICE_ID::text  else IIL_ENQUIRY_SMS_MODID end)IIL_ENQUIRY_SMS_MODID,
+				IIL_ENQUIRY_RECV_CST_WEIGHT,3,IIL_ENQUIRY_SMS_DATE,IIL_ENQUIRY_SMS_IS_INDIAN,(case IN_SERVICE_WISE when 0 then NULL else IIL_ENQUIRY_SMS_SERVICE_ID end )IIL_ENQUIRY_SMS_SERVICE_ID
+			FROM
+				IIL_ENQUIRY_SMS
+			WHERE
+					date(IIL_ENQUIRY_SMS_DATE)
+					BETWEEN (CASE WHEN IN_DAY_OR_MONTH =1 THEN date(now())-IN_NUMBER_OF_DAYS WHEN IN_DAY_OR_MONTH=2 THEN ADD_MONTHS(current_date,-IN_NUMBER_OF_DAYS) END)
+					AND date(now())
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE IIL_ENQUIRY_SMS_MODID END) IN
+					(
+/*
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST FROM DUAL)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+
+*/
+						select MODULE_ID from (
+						with recursive fun (rownum) as
+						(
+							select 1 rownum,SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,0)+1,(INSTR(MY_MODULE_LIST,',',1,0+1)-INSTR(MY_MODULE_LIST,',',1,0))-1)MODULE_ID
+							from (Select (Case When IN_MODULE_LIST Is Not Null Then ','||IN_MODULE_LIST||',' Else '' End) ) tbl
+							union all
+							select rownum+1, SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,rownum)+1,(INSTR(MY_MODULE_LIST,',',1,rownum+1)-INSTR	
+								(MY_MODULE_LIST,',',1,rownum))-1)MODULE_ID
+							from fun
+							where rownum < Length(MY_MODULE_LIST)-Length(Replace(MY_MODULE_LIST,',',''))
+						)
+						select MODULE_ID from fun where rownum!=1
+						)tbl
+
+						UNION
+				SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+/*
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List FROM DUAL)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+*/
+						select MODULE_ID from (
+						with recursive fun (rownum) as
+						(
+							select 1 rownum,SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,0)+1,(INSTR(MY_MODULE_LIST,',',1,0+1)-INSTR(MY_MODULE_LIST,',',1,0))-1)MODULE_ID
+							from (Select (Case When IN_MODULE_LIST Is Not Null Then ','||IN_MODULE_LIST||',' Else '' End) ) tbl
+							union all
+							select rownum+1, SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,rownum)+1,(INSTR(MY_MODULE_LIST,',',1,rownum+1)-INSTR	
+								(MY_MODULE_LIST,',',1,rownum))-1)MODULE_ID
+							from fun
+							where rownum < Length(MY_MODULE_LIST)-Length(Replace(MY_MODULE_LIST,',',''))
+						)
+						select MODULE_ID from fun where rownum!=1
+						)tbl
+
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE IIL_ENQUIRY_RECV_CST_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+/*
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE FROM DUAL)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+*/
+select CUST_ID from (
+	with recursive fun as (rownum) as
+	(
+		select 1 rownum,TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,0)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,0+1)-INSTR(MY_CUSTOMER_TYPE,',',1,0))-1))CUST_ID
+		from (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE )tbl
+		union all
+		select rownum+1,TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+		from fun where rownum < (LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+	) select CUST_ID from fun where rownum !=1
+)tbl
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(IIL_ENQUIRY_SENDER_COUNTRY) END) IN(
+/*
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+*/
+
+						select REGN from (
+						with recursive fun as as (rownum) as
+						(
+							select 1 rownum, SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,0)+1,(INSTR(MY_REGION_TYPE,',',1,0+1)-INSTR(MY_REGION_TYPE,',',1,0))-1)REGN
+							from (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE ) tbl
+							union all
+							select rownum+1, SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+							from fun where rownum < <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						)
+						select REGN from fun
+						)tbl
+
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+
+/*
+						
+					AND DECODE(IN_INDIAN,NULL,-999,coalesce(IIL_ENQUIRY_SMS_IS_INDIAN,1))=DECODE(IN_INDIAN,NULL,-999,0,-1,1)
+					AND DECODE (IN_SEARCH_PARAM,0,DECODE(INSTR(coalesce(IIL_ENQUIRY_SMS_CURRENT_URL,IIL_ENQUIRY_SMS_REF_URL),'search.mp'),0,0,1),
+					1,DECODE(INSTR(coalesce(IIL_ENQUIRY_SMS_CURRENT_URL,IIL_ENQUIRY_SMS_REF_URL),'search.mp'),0,1,0),1) = 1
+					AND DECODE(coalesce(IN_QUERY_TYPE,-9),3,1,-9,1,0)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE IIL_ENQUIRY_SMS_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+
+
+*/
+AND (case when IN_INDIAN is NULL then -999 else coalesce(DIR_QUERY_IS_INDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when 0 then -1 else 1 end)
+					AND (case IN_SEARCH_PARAM when 0 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 0 else 1 end),
+          when 1 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 1 else 0 end)
+          else 1 end) = 1
+					AND (case coalesce(IN_QUERY_TYPE,-9) WHEN 3 THEN 1 WHEN -9 THEN 1 ELSE 0 END)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE DIR_QUERY_SERVICE_ID END ) IN (
+/*
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID FROM DUAL)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+*/
+						select REGN from (
+						with recursive fun as as (rownum) as
+						(
+							select 1 rownum, SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,0)+1,(INSTR(MY_REGION_TYPE,',',1,0+1)-INSTR(MY_REGION_TYPE,',',1,0))-1)REGN
+							from (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE ) tbl
+							union all
+							select rownum+1, SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+							from fun where rownum < <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						)
+						select REGN from fun
+						)tbl
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+
+
+
+
+
+
+						
+
+		UNION ALL
+			SELECT
+					CALL_ID,coalesce(TO_CHAR(CALLER_FK_GLUSER_USR_ID),CALLER_MOBILE),RECEIVER_FK_GLUSR_USR_ID,
+					(case IN_SERVICE_WISE when 0 then CALL_REFERRER_MODID when 1 then GLOBAL_CALL_RECORDS_SERVICE_ID::text  elseCALL_REFERRER_MODID end)CALL_REFERRER_MODID,
+					GCR_CUSTTYPE_WEIGHT,
+					(case CALL_SERVICE_TYPE when 'SMS' then 1 else 2 end),CALL_DATETIME,GLOBAL_CALL_RECORDS_ISINDIAN,
+(case IN_SERVICE_WISE when 0 then NULL else GLOBAL_CALL_RECORDS_SERVICE_ID end)GLOBAL_CALL_RECORDS_SERVICE_ID
+			FROM
+					GLOBAL_CALL_RECORDS
+			WHERE
+					CALL_BATCH_PROCESSED=1 AND CALL_IMART_OR_HELLOTD = 'IMART'  AND (CALL_SMS_SENT = 'Buyer' OR CALL_SMS_SENT IS NULL)
+					AND date(CALL_DATETIME) BETWEEN
+					(CASE WHEN IN_DAY_OR_MONTH =1 THEN date(now())-IN_NUMBER_OF_DAYS WHEN IN_DAY_OR_MONTH=2 THEN ADD_MONTHS(current_date,-IN_NUMBER_OF_DAYS) END)
+					AND date(now())
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE CALL_REFERRER_MODID END) IN
+					(
+/*
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST FROM DUAL)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+*/
+						select MODULE_ID from (
+						with recursive fun (rownum) as
+						(
+							select 1 rownum,SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,0)+1,(INSTR(MY_MODULE_LIST,',',1,0+1)-INSTR(MY_MODULE_LIST,',',1,0))-1)MODULE_ID
+							from (Select (Case When IN_MODULE_LIST Is Not Null Then ','||IN_MODULE_LIST||',' Else '' End) ) tbl
+							union all
+							select rownum+1, SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,rownum)+1,(INSTR(MY_MODULE_LIST,',',1,rownum+1)-INSTR	
+								(MY_MODULE_LIST,',',1,rownum))-1)MODULE_ID
+							from fun
+							where rownum < Length(MY_MODULE_LIST)-Length(Replace(MY_MODULE_LIST,',',''))
+						)
+						select MODULE_ID from fun where rownum!=1
+						)tbl
+
+
+						UNION
+						SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+/*
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List FROM DUAL)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+*/
+					select MODULE_ID from (
+						with recursive fun (rownum) as
+						(
+							select 1 rownum,SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,0)+1,(INSTR(MY_MODULE_LIST,',',1,0+1)-INSTR(MY_MODULE_LIST,',',1,0))-1)MODULE_ID
+							from (Select (Case When IN_MODULE_LIST Is Not Null Then ','||IN_MODULE_LIST||',' Else '' End) ) tbl
+							union all
+							select rownum+1, SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,rownum)+1,(INSTR(MY_MODULE_LIST,',',1,rownum+1)-INSTR	
+								(MY_MODULE_LIST,',',1,rownum))-1)MODULE_ID
+							from fun
+							where rownum < Length(MY_MODULE_LIST)-Length(Replace(MY_MODULE_LIST,',',''))
+						)
+						select MODULE_ID from fun where rownum!=1
+						)tbl
+
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE GCR_CUSTTYPE_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+/*
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE FROM DUAL)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+*/
+select CUST_ID from (
+	with recursive fun as (rownum) as
+	(
+		select 1 rownum,TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,0)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,0+1)-INSTR(MY_CUSTOMER_TYPE,',',1,0))-1))CUST_ID
+		from (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE )tbl
+		union all
+		select rownum+1,TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+		from fun where rownum < (LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+	) select CUST_ID from fun where rownum !=1
+)tbl
+
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(CALLER_COUNTRY_ISO) END) IN(
+/*
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE FROM DUAL)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+*/
+					select REGN from (
+						with recursive fun as as (rownum) as
+						(
+							select 1 rownum, SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,0)+1,(INSTR(MY_REGION_TYPE,',',1,0+1)-INSTR(MY_REGION_TYPE,',',1,0))-1)REGN
+							from (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE ) tbl
+							union all
+							select rownum+1, SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+							from fun where rownum < <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						)
+						select REGN from fun
+						)tbl
+
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+					
+					--AND DECODE(IN_INDIAN,NULL,-999,coalesce(GLOBAL_CALL_RECORDS_ISINDIAN,1))=DECODE(IN_INDIAN,NULL,-999,0,-1,1)
+AND (case when IN_INDIAN is NULL then -999 else coalesce(GLOBAL_CALL_RECORDS_ISINDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when 0 then -1 else 1 end)
+					
+					AND (CASE WHEN IN_SEARCH_PARAM IS NULL THEN 1 WHEN IN_SEARCH_PARAM=3 THEN 1 ELSE 0 END)=1
+					AND (CASE coalesce(IN_QUERY_TYPE,-9) WHEN 1 THEN 1 WHEN -9 THEN 1 ELSE 0 END)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE GLOBAL_CALL_RECORDS_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' --/*FROM DUAL*/
+						)
+
+					
+		UNION ALL
+			SELECT
+					PNS_CALL_RECORD_ID,coalesce(TO_CHAR(PNS_CALL_CALLER_GLUSR_ID),PNS_CALL_CALLER_NUMBER),PNS_CALL_RECEIVER_GLUSR_ID,
+					(case IN_SERVICE_WISE when 0 then 'PNS' when 1 then PNS_CALL_RECORDS_SERVICE_ID::text else 'PNS' end),
+					NULL,2,
+					PNS_CALL_RECORD_DATE,PNS_CALL_ISINDIAN,(case IN_SERVICE_WISE when 0 then NULL else PNS_CALL_RECORDS_SERVICE_ID end)PNS_CALL_RECORDS_SERVICE_ID
+			FROM
+					PNS_CALL_RECORDS
+			WHERE
+					PNS_CALL_STATUS IN ('S','F')
+					AND date(PNS_CALL_RECORD_DATE) BETWEEN
+					(CASE WHEN IN_DAY_OR_MONTH =1 THEN date(now())-IN_NUMBER_OF_DAYS WHEN IN_DAY_OR_MONTH=2 THEN ADD_MONTHS(current_date,-IN_NUMBER_OF_DAYS) END)
+					AND date(now())
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE 'PNS' END) IN
+					(
+/*
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST FROM DUAL)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+*/
+					select MODULE_ID from (
+						with recursive fun (rownum) as
+						(
+							select 1 rownum,SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,0)+1,(INSTR(MY_MODULE_LIST,',',1,0+1)-INSTR(MY_MODULE_LIST,',',1,0))-1)MODULE_ID
+							from (Select (Case When IN_MODULE_LIST Is Not Null Then ','||IN_MODULE_LIST||',' Else '' End) ) tbl
+							union all
+							select rownum+1, SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,rownum)+1,(INSTR(MY_MODULE_LIST,',',1,rownum+1)-INSTR	
+								(MY_MODULE_LIST,',',1,rownum))-1)MODULE_ID
+							from fun
+							where rownum < Length(MY_MODULE_LIST)-Length(Replace(MY_MODULE_LIST,',',''))
+						)
+						select MODULE_ID from fun where rownum!=1
+						)tbl
+===========bheri
+						UNION
+						SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+/*
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List FROM DUAL)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+*/
+					select MODULE_ID from (
+						with recursive fun (rownum) as
+						(
+							select 1 rownum,SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,0)+1,(INSTR(MY_MODULE_LIST,',',1,0+1)-INSTR(MY_MODULE_LIST,',',1,0))-1)MODULE_ID
+							from (Select (Case When IN_MODULE_LIST Is Not Null Then ','||IN_MODULE_LIST||',' Else '' End) ) tbl
+							union all
+							select rownum+1, SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,rownum)+1,(INSTR(MY_MODULE_LIST,',',1,rownum+1)-INSTR	
+								(MY_MODULE_LIST,',',1,rownum))-1)MODULE_ID
+							from fun
+							where rownum < Length(MY_MODULE_LIST)-Length(Replace(MY_MODULE_LIST,',',''))
+						)
+						select MODULE_ID from fun where rownum!=1
+						)tbl
+
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE PNS_CUSTTYPE_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+/*
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE FROM DUAL)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+*/
+	select CUST_ID from (
+		with recursive fun as (rownum) as
+		(
+			select 1 rownum,TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,0)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,0+1)-INSTR(MY_CUSTOMER_TYPE,',',1,0))-1))CUST_ID
+			from (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE )tbl
+			union all
+			select rownum+1,TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+			from fun where rownum < (LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+		) select CUST_ID from fun where rownum !=1
+	)tbl
+
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM('IN') END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+					AND (CASE WHEN IN_INDIAN IS NULL TEHN -999 ELSE coalesce(PNS_CALL_ISINDIAN,1) END)=(CASE WHEN IN_INDIAN IS NULL THEN -999 WHEN IN_INDIAN=0 THEN -1 ELSE 1 END)
+					AND (CASE WHEN IN_SEARCH_PARAM IS NULL THEN 1 WHEN IN_SEARCH_PARAM=3 THEN 1 ELSE 0 END)=1
+					AND (CASE coalesce(IN_QUERY_TYPE,-9) WHEN 2 THEN 1 WHEN -9 THEN 1 ELSE 0 END)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE PNS_CALL_RECORDS_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+			)) GROUP BY QUERY_MODID,DIR_QUERY_SERVICE_ID
+		ORDER BY QUERY_MODID,DIR_QUERY_SERVICE_ID;
+
+		ELSIF IN_COUNT_UNQ_RECEIVER=1 THEN
+
+		OPEN OUT_CUR FOR
+			SELECT
+				(
+				CASE WHEN IN_SERVICE_WISE=0 THEN
+					
+					(CASE 
+						WHEN (SELECT GL_MODULE_NAME FROM GL_MODULE glModule WHERE GL_MODULE_ID=QUERY_MODID) IS NULL THEN coalesce(QUERY_MODID,'Free')
+						ELSE (SELECT GL_MODULE_NAME FROM GL_MODULE glModule WHERE GL_MODULE_ID=QUERY_MODID)||' ('||QUERY_MODID||')'
+					END )
+					WHEN IN_SERVICE_WISE=1 THEN
+						(SELECT coalesce(SERVICE_SHORTNAME,SERVICE_NAME) FROM SERVICE WHERE SERVICE_ID=QUERY_MODID)
+					WHEN IN_SERVICE_WISE=2 THEN
+						(SELECT coalesce(SERVICE_SHORTNAME,SERVICE_NAME) FROM SERVICE WHERE SERVICE_ID=DIR_QUERY_SERVICE_ID)||'-'||QUERY_MODID
+				END
+				) MOD_NAME,
+				COUNT(DISTINCT QUERY_RCV_GLUSR_USR_ID) QUERY_ID,
+				(CASE WHEN IN_SERVICE_WISE=2 THEN DIR_QUERY_SERVICE_ID ELSE '-1'  END)DIR_QUERY_SERVICE_ID,
+				NULL,NULL,NULL,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 0 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTWEBINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 2 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTCALLINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 1 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTSMSINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 0 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTWEBFOREIGN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 2 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTCALLFOREIGN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 1 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTSMSFOREIGN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then QUERY_RCV_GLUSR_USR_ID else NULL end)) CNTINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then QUERY_RCV_GLUSR_USR_ID else NULL end)) CNTFOREIGN ,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 3 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTSMSNINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 3 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTSMSNFOREIGN,
+        MAX(UNQ_ENQ_SND_CNT) UNQ_ENQ_SND_CNT
+		  FROM
+		  (
+      Select Query_Id, Fk_Glusr_Usr_Id, Query_Rcv_Glusr_Usr_Id, Query_Modid, 
+      Dir_Query_Custtype_Weight, Query_Type_Flag, Date_R, Query_Isindian, Dir_Query_Service_Id, COUNT(DISTINCT QUERY_RCV_GLUSR_USR_ID) OVER () UNQ_ENQ_SND_CNT
+      FROM
+      (
+			SELECT
+            QUERY_ID,coalesce(TO_CHAR(FK_GLUSR_USR_ID),S_MOBILE)FK_GLUSR_USR_ID,QUERY_RCV_GLUSR_USR_ID,
+			(case IN_SERVICE_WISE when 0 then QUERY_MODID when 1 then TO_CHAR(DIR_QUERY_SERVICE_ID) else QUERY_MODID end)QUERY_MODID,DIR_QUERY_CUSTTYPE_WEIGHT,
+            0 QUERY_TYPE_FLAG,DATE_R,DIR_QUERY_IS_INDIAN QUERY_ISINDIAN,(case IN_SERVICE_WISE when 0 then NULL else DIR_QUERY_SERVICE_ID end)DIR_QUERY_SERVICE_ID
+			FROM
+					DIR_QUERY
+			WHERE
+					date(DATE_R) BETWEEN
+				    (CASE WHEN IN_DAY_OR_MONTH =1 THEN date(now())-IN_NUMBER_OF_DAYS WHEN IN_DAY_OR_MONTH=2 THEN ADD_MONTHS(current_date,-IN_NUMBER_OF_DAYS) END)
+					AND date(now())
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE QUERY_MODID END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+						SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE DIR_QUERY_CUSTTYPE_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(DIR_QUERY_SNDR_COUNTRY_ISO) END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+
+
+			/*			
+					AND DECODE(IN_INDIAN,NULL,-999,coalesce(DIR_QUERY_IS_INDIAN,1))=DECODE(IN_INDIAN,NULL,-999,0,-1,1)
+					AND DECODE (IN_SEARCH_PARAM,0,DECODE(INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp'),0,0,1),
+          1,DECODE(INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp'),0,1,0),
+          2,DECODE(INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile'),0,0,1),
+          3,DECODE(INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile'),0,1,0),1) = 1
+					AND DECODE(coalesce(IN_QUERY_TYPE,-9),0,1,-9,1,0)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE DIR_QUERY_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+
+
+*/
+AND (case when IN_INDIAN is NULL then -999 else coalesce(DIR_QUERY_IS_INDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when 0 then -1 else 1 end)
+					AND (case IN_SEARCH_PARAM when 0 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 0 else 1 end),
+          when 1 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 1 else 0 end),
+          when 2 then (case INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile') when 0 then 0 else 1 end),
+          when 3 then (case INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile') when 0 then 1 else 0 end) else 1 end) = 1
+					AND (case coalesce(IN_QUERY_TYPE,-9) when 0 then 1 when -9 then 1 else 0 end)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE DIR_QUERY_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+
+
+
+
+						
+		UNION ALL
+			SELECT
+          IIL_ENQUIRY_SMS_ID,coalesce(TO_CHAR(IIL_ENQUIRY_SENDER_GLID),IIL_ENQUIRY_SENDER_MOBILE),IIL_ENQUIRY_RECV_GLID,
+		  (CASE IN_SERVICE_WISE WHEN 0 THEN IIL_ENQUIRY_SMS_MODID WHEN 1 THEN IIL_ENQUIRY_SMS_SERVICE_ID::TEXT ELSE IIL_ENQUIRY_SMS_MODID END)IIL_ENQUIRY_SMS_MODID,
+          IIL_ENQUIRY_RECV_CST_WEIGHT,3,IIL_ENQUIRY_SMS_DATE,IIL_ENQUIRY_SMS_IS_INDIAN,(CASE IN_SERVICE_WISE WHEN 0 THEN NULL ELSE IIL_ENQUIRY_SMS_SERVICE_ID END)IIL_ENQUIRY_SMS_SERVICE_ID
+			FROM
+				IIL_ENQUIRY_SMS
+			WHERE
+					date(IIL_ENQUIRY_SMS_DATE)
+					BETWEEN (CASE WHEN IN_DAY_OR_MONTH =1 THEN date(NOW())-IN_NUMBER_OF_DAYS WHEN IN_DAY_OR_MONTH=2 THEN ADD_MONTHS(current_date,-IN_NUMBER_OF_DAYS) END)
+					AND date(NOW())
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE IIL_ENQUIRY_SMS_MODID END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+	SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE IIL_ENQUIRY_RECV_CST_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(IIL_ENQUIRY_SENDER_COUNTRY) END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+/*
+						
+					AND DECODE(IN_INDIAN,NULL,-999,coalesce(IIL_ENQUIRY_SMS_IS_INDIAN,1))=DECODE(IN_INDIAN,NULL,-999,0,-1,1)
+					AND DECODE (IN_SEARCH_PARAM,0,DECODE(INSTR(coalesce(IIL_ENQUIRY_SMS_CURRENT_URL,IIL_ENQUIRY_SMS_REF_URL),'search.mp'),0,0,1),
+					1,DECODE(INSTR(coalesce(IIL_ENQUIRY_SMS_CURRENT_URL,IIL_ENQUIRY_SMS_REF_URL),'search.mp'),0,1,0),1) = 1
+					AND DECODE(coalesce(IN_QUERY_TYPE,-9),3,1,-9,1,0)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE IIL_ENQUIRY_SMS_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+
+*/
+AND (case when IN_INDIAN is NULL then -999 else coalesce(DIR_QUERY_IS_INDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when 0 then -1 else 1 end)
+					AND (case IN_SEARCH_PARAM when 0 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 0 else 1 end),
+          when 1 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 1 else 0 end) else 1 end) = 1
+					AND (case coalesce(IN_QUERY_TYPE,-9) WHEN 3 TEHN 1 WHEN -9 THEN 1 ELSE 0 END)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE DIR_QUERY_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+
+
+
+						
+		UNION ALL
+			SELECT
+            CALL_ID,coalesce(TO_CHAR(CALLER_FK_GLUSER_USR_ID),CALLER_MOBILE),RECEIVER_FK_GLUSR_USR_ID,
+			(case IN_SERVICE_WISE when 0 then CALL_REFERRER_MODID when 1 then GLOBAL_CALL_RECORDS_SERVICE_ID::text else CALL_REFERRER_MODID end)CALL_REFERRER_MODID,
+			GCR_CUSTTYPE_WEIGHT,
+(case CALL_SERVICE_TYPE when 'SMS' then 1 else 2 end),CALL_DATETIME,GLOBAL_CALL_RECORDS_ISINDIAN,(case IN_SERVICE_WISE when 0 then NULL else  GLOBAL_CALL_RECORDS_SERVICE_ID end )GLOBAL_CALL_RECORDS_SERVICE_ID
+			FROM
+					GLOBAL_CALL_RECORDS
+			WHERE
+					CALL_BATCH_PROCESSED=1 AND CALL_IMART_OR_HELLOTD = 'IMART'  AND (CALL_SMS_SENT = 'Buyer' OR CALL_SMS_SENT IS NULL)
+					AND date(CALL_DATETIME) BETWEEN
+					(CASE WHEN IN_DAY_OR_MONTH =1 THEN date(now())-IN_NUMBER_OF_DAYS WHEN IN_DAY_OR_MONTH=2 THEN ADD_MONTHS(current_date,-IN_NUMBER_OF_DAYS) END)
+					AND date(now())
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE CALL_REFERRER_MODID END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+						SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE GCR_CUSTTYPE_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(CALLER_COUNTRY_ISO) END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+					And (case when In_Indian is Null then -999 else coalesce(Global_Call_Records_Isindian,1) end)=(case when In_Indian is Null then -999 when In_Indian=0 then -1 else 1 end)
+					AND (case when IN_SEARCH_PARAM is NULL then 1 when IN_SEARCH_PARAM=3 then 1 else 0 end)=1
+					AND (case coalesce(IN_QUERY_TYPE,-9) when 1 then 1 when -9 then 1 else 0 end)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE GLOBAL_CALL_RECORDS_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+		UNION ALL
+			SELECT
+            PNS_CALL_RECORD_ID,coalesce(TO_CHAR(PNS_CALL_CALLER_GLUSR_ID),PNS_CALL_CALLER_NUMBER),PNS_CALL_RECEIVER_GLUSR_ID,
+			(case IN_SERVICE_WISE when 0 then 'PNS' when 1 then PNS_CALL_RECORDS_SERVICE_ID::text else 'PNS' end)
+			,NULL,2,
+            PNS_CALL_RECORD_DATE,PNS_CALL_ISINDIAN,(case IN_SERVICE_WISE when 0 then NULL else PNS_CALL_RECORDS_SERVICE_ID end)PNS_CALL_RECORDS_SERVICE_ID
+			FROM
+					PNS_CALL_RECORDS
+			WHERE
+					PNS_CALL_STATUS IN ('S','F')
+					AND date(PNS_CALL_RECORD_DATE) BETWEEN
+					(CASE WHEN IN_DAY_OR_MONTH =1 THEN date(now())-IN_NUMBER_OF_DAYS WHEN IN_DAY_OR_MONTH=2 THEN ADD_MONTHS(current_date,-IN_NUMBER_OF_DAYS) END)
+					AND date(now())
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE 'PNS' END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+						SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE PNS_CUSTTYPE_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM('IN') END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+
+
+	--AND DECODE(IN_INDIAN,NULL,-999,coalesce(PNS_CALL_ISINDIAN,1))=DECODE(IN_INDIAN,NULL,-999,0,-1,1)
+	And (case when In_Indian is Null then -999 else coalesce(PNS_CALL_ISINDIAN,1) end)=(case when In_Indian is Null then -999 when In_Indian=0 then -1 else 1 end)
+
+					--AND DECODE (IN_SEARCH_PARAM,NULL,1,3,1,0)=1
+					AND (case when IN_SEARCH_PARAM is NULL then 1 when IN_SEARCH_PARAM=3 then 1 else 0 end)=1
+
+					AND (case coalesce(IN_QUERY_TYPE,-9) when 2 then 1 when -9 then 1 else 0 end)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE PNS_CALL_RECORDS_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+					
+						)
+			)) GROUP BY QUERY_MODID,DIR_QUERY_SERVICE_ID
+		ORDER BY QUERY_MODID,DIR_QUERY_SERVICE_ID;
+		ELSE
+			OPEN OUT_CUR FOR
+			SELECT
+				(
+			CASE WHEN IN_SERVICE_WISE=0 THEN
+				
+				(case 
+					when (SELECT GL_MODULE_NAME FROM GL_MODULE glModule WHERE GL_MODULE_ID=QUERY_MODID) is NULL then coalesce(QUERY_MODID,'Free')
+					else (SELECT GL_MODULE_NAME FROM GL_MODULE glModule WHERE GL_MODULE_ID=QUERY_MODID end)||' ('||QUERY_MODID||')'
+				)
+				WHEN IN_SERVICE_WISE=1 THEN
+					(SELECT coalesce(SERVICE_SHORTNAME,SERVICE_NAME) FROM SERVICE WHERE SERVICE_ID=QUERY_MODID)
+				WHEN IN_SERVICE_WISE=2 THEN
+					(SELECT coalesce(SERVICE_SHORTNAME,SERVICE_NAME) FROM SERVICE WHERE SERVICE_ID=DIR_QUERY_SERVICE_ID)||'-'||QUERY_MODID
+			END
+			) MOD_NAME,
+				COUNT(QUERY_ID) QUERY_ID,
+				(CASE WHEN IN_SERVICE_WISE=2 THEN DIR_QUERY_SERVICE_ID ELSE '-1'  END)DIR_QUERY_SERVICE_ID,
+				TO_CHAR(DATE_R,'MON-YYYY'),
+				TO_CHAR(DATE_R,'YYYY'),
+				TO_CHAR(DATE_R,'MM'),
+				SUM((case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 0 then 1 else 0 end) else 0 end)) CNTWEBINDIAN,
+				SUM((case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 2 then 1 else 0 end) else 0 end)) CNTCALLINDIAN,
+				SUM((case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 1 then 1 else 0 end) else 0 end)) CNTSMSINDIAN,
+				SUM((case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 0 then 1 else 0 end) else 0 end)) CNTWEBFOREIGN,
+				SUM((case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 2 then 1 else 0 end) else 0 end)) CNTCALLFOREIGN,
+				SUM((case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 1 then 1 else 0 end) else 0 end)) CNTSMSFOREIGN,
+				SUM((case coalesce(QUERY_ISINDIAN,0) when -1 then 1 else 0 end)) CNTINDIAN,
+				SUM((case coalesce(QUERY_ISINDIAN,0) when 0 then 1 else 0 end)) CNTFOREIGN ,
+				SUM((case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 3 then 1 else 0 end) else 0 end)) CNTSMSNINDIAN,
+				SUM((case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 3 then 1 else 0 end) else 0 end)) CNTSMSNFOREIGN
+			FROM
+			(
+				Select Query_Id, Fk_Glusr_Usr_Id, Query_Rcv_Glusr_Usr_Id,
+				Query_Modid, Dir_Query_Custtype_Weight, Query_Type_Flag, Date_R, Query_Isindian, Dir_Query_Service_Id, COUNT(1) OVER (PARTITION BY Query_Rcv_Glusr_Usr_Id) TOT_GLUSR_ENQ_CNT
+				FROM
+				(
+					SELECT
+					QUERY_ID,coalesce(TO_CHAR(FK_GLUSR_USR_ID),S_MOBILE)FK_GLUSR_USR_ID,QUERY_RCV_GLUSR_USR_ID,
+					(case IN_SERVICE_WISE when 0 then QUERY_MODID when 1 tehn DIR_QUERY_SERVICE_ID::text else QUERY_MODID end)QUERY_MODID,DIR_QUERY_CUSTTYPE_WEIGHT,
+					0 QUERY_TYPE_FLAG,DATE_R,DIR_QUERY_IS_INDIAN QUERY_ISINDIAN,(case IN_SERVICE_WISE when 0 then NULL else DIR_QUERY_SERVICE_ID end)DIR_QUERY_SERVICE_ID
+					FROM
+						DIR_QUERY
+					WHERE
+					date(DATE_R) BETWEEN
+					(CASE WHEN IN_DAY_OR_MONTH =1 THEN date(now())-IN_NUMBER_OF_DAYS WHEN IN_DAY_OR_MONTH=2 THEN ADD_MONTHS(current_date,-IN_NUMBER_OF_DAYS) END)
+					AND date(now())
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE QUERY_MODID END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+				SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+
+
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE DIR_QUERY_CUSTTYPE_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(DIR_QUERY_SNDR_COUNTRY_ISO) END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+					AND (case when IN_INDIAN is NULL then -999 else coalesce(DIR_QUERY_IS_INDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when 0 then -1 else 1 end)
+					AND (case IN_SEARCH_PARAM when 0 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 0 else 1 end),
+          when 1 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 1 else 0 end),
+          when 2 then (case INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile') when 0 then 0 else 1 end),
+          when 3 then (case INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile') when 0 then 1 else 0 end) else 1 end) = 1
+					AND (case coalesce(IN_QUERY_TYPE,-9) when 0 then 1 when -9 then 1 else 0 end)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE DIR_QUERY_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+
+				UNION ALL
+					SELECT
+					IIL_ENQUIRY_SMS_ID,coalesce(TO_CHAR(IIL_ENQUIRY_SENDER_GLID),IIL_ENQUIRY_SENDER_MOBILE),IIL_ENQUIRY_RECV_GLID,
+					(case IN_SERVICE_WISE when 0 then IIL_ENQUIRY_SMS_MODID when 1 then IIL_ENQUIRY_SMS_SERVICE_ID::text else IIL_ENQUIRY_SMS_MODID end)IIL_ENQUIRY_SMS_MODID,
+					IIL_ENQUIRY_RECV_CST_WEIGHT,3,IIL_ENQUIRY_SMS_DATE,IIL_ENQUIRY_SMS_IS_INDIAN,(case IN_SERVICE_WISE when 0 then NULL else IIL_ENQUIRY_SMS_SERVICE_ID end)IIL_ENQUIRY_SMS_SERVICE_ID
+					FROM
+						IIL_ENQUIRY_SMS
+					WHERE
+					date(IIL_ENQUIRY_SMS_DATE)
+					BETWEEN (CASE WHEN IN_DAY_OR_MONTH =1 THEN date(now())-IN_NUMBER_OF_DAYS WHEN IN_DAY_OR_MONTH=2 THEN ADD_MONTHS(current_date,-IN_NUMBER_OF_DAYS) END)
+					AND date(now())
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE IIL_ENQUIRY_SMS_MODID END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+						SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) --/*FROM DUAL*/
+)
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' --/*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE IIL_ENQUIRY_RECV_CST_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 --/*FROM DUAL*/
+						)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(IIL_ENQUIRY_SENDER_COUNTRY) END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+					AND (case when IN_INDIAN is NULL then -999 else coalesce(IIL_ENQUIRY_SMS_IS_INDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when IN_INDIAN=0 then -1 else 1 end)
+					AND (case IN_SEARCH_PARAM when 0 then (case position('search.mp' in coalesce(IIL_ENQUIRY_SMS_CURRENT_URL,IIL_ENQUIRY_SMS_REF_URL)) when 0 then 0 else 1 end)
+					when 1 then (case position('search.mp' in coalesce(IIL_ENQUIRY_SMS_CURRENT_URL,IIL_ENQUIRY_SMS_REF_URL)) when 0 then 1 else 0 end) else 1 end) = 1
+					AND (case coalesce(IN_QUERY_TYPE,-9) when 3 then 1 when -9 then 1 else 0 end)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE IIL_ENQUIRY_SMS_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' --/*FROM DUAL*/
+						)
+				UNION ALL
+					SELECT
+					CALL_ID,coalesce(TO_CHAR(CALLER_FK_GLUSER_USR_ID),CALLER_MOBILE),RECEIVER_FK_GLUSR_USR_ID,
+					(case IN_SERVICE_WISE when 0 then CALL_REFERRER_MODID when 1 then GLOBAL_CALL_RECORDS_SERVICE_ID::text else CALL_REFERRER_MODID end)CALL_REFERRER_MODID,
+					GCR_CUSTTYPE_WEIGHT,
+					(case CALL_SERVICE_TYPE when 'SMS' then 1 else 2 end),CALL_DATETIME,GLOBAL_CALL_RECORDS_ISINDIAN,(case IN_SERVICE_WISE when 0 then NULL else GLOBAL_CALL_RECORDS_SERVICE_ID end)GLOBAL_CALL_RECORDS_SERVICE_ID
+					FROM
+							GLOBAL_CALL_RECORDS
+					WHERE
+					CALL_BATCH_PROCESSED=1 AND CALL_IMART_OR_HELLOTD = 'IMART'  AND (CALL_SMS_SENT = 'Buyer' OR CALL_SMS_SENT IS NULL)
+					AND date(CALL_DATETIME) BETWEEN
+					(CASE WHEN IN_DAY_OR_MONTH =1 THEN date(now())-IN_NUMBER_OF_DAYS WHEN IN_DAY_OR_MONTH=2 THEN ADD_MONTHS(current_date,-IN_NUMBER_OF_DAYS) END)
+					AND date(now())
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE CALL_REFERRER_MODID END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+						SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE GCR_CUSTTYPE_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(CALLER_COUNTRY_ISO) END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+					AND (case when IN_INDIAN is NULL then -999 else coalesce(GLOBAL_CALL_RECORDS_ISINDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when IN_INDIAN=0 then -1 else 1 end)
+					AND (case when IN_SEARCH_PARAM is NULL then 1 when IN_SEARCH_PARAM=3 then 1 else 0 end)=1
+					AND (case coalesce(IN_QUERY_TYPE,-9) when 1 then 1 when -9 then 1 else 0 end)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE GLOBAL_CALL_RECORDS_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' -- /*FROM DUAL*/
+						)
+				UNION ALL
+					SELECT
+					PNS_CALL_RECORD_ID,coalesce(TO_CHAR(PNS_CALL_CALLER_GLUSR_ID),PNS_CALL_CALLER_NUMBER),PNS_CALL_RECEIVER_GLUSR_ID,
+					(case IN_SERVICE_WISE when 0 then 'PNS' when 1 then PNS_CALL_RECORDS_SERVICE_ID::text else 'PNS' end),
+					NULL,2,
+					PNS_CALL_RECORD_DATE,PNS_CALL_ISINDIAN,(case IN_SERVICE_WISE when 0 then NULL else PNS_CALL_RECORDS_SERVICE_ID end)PNS_CALL_RECORDS_SERVICE_ID
+					FROM
+							PNS_CALL_RECORDS
+					WHERE
+					PNS_CALL_STATUS IN ('S','F')
+					AND date(PNS_CALL_RECORD_DATE) BETWEEN
+					(CASE WHEN IN_DAY_OR_MONTH =1 THEN date(now())-IN_NUMBER_OF_DAYS WHEN IN_DAY_OR_MONTH=2 THEN ADD_MONTHS(current_date,-IN_NUMBER_OF_DAYS) END)
+					AND date(now())
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE 'PNS' END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+						SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE PNS_CUSTTYPE_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM('IN') END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+					AND (case when IN_INDIAN is NULL then -999 else coalesce(PNS_CALL_ISINDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when IN_INDIAN=0 then -1 else 1 end)
+					AND (case when IN_SEARCH_PARAM is NULL then 1 when IN_SEARCH_PARAM=3 then 1 else 0 end)=1
+					AND (case coalesce(IN_QUERY_TYPE,-9) when 2 then 1 when -9 then 1 else 0 end)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE PNS_CALL_RECORDS_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' --/*FROM DUAL*/
+						)
+				)
+			)
+			Where (case when In_Enq_Cnt_From is Null then 1 else Tot_Glusr_Enq_Cnt end) >= (case when In_Enq_Cnt_From is Null then 1 else In_Enq_Cnt_From end)
+			AND (case when IN_ENQ_CNT_TO is NULL then 1 else TOT_GLUSR_ENQ_CNT end) <= (case when IN_ENQ_CNT_TO is NULL then 1 else IN_ENQ_CNT_TO end)
+			GROUP BY QUERY_MODID,TO_CHAR(DATE_R,'MON-YYYY'),TO_CHAR(DATE_R,'YYYY'),TO_CHAR(DATE_R,'MM'),DIR_QUERY_SERVICE_ID
+			ORDER BY TO_CHAR(DATE_R,'YYYY'), TO_CHAR(DATE_R,'MM'),DIR_QUERY_SERVICE_ID;
+		END IF;
+	ELSE
+		IF IN_COUNT_UNQ_SENDER=1 THEN
+			OPEN OUT_CUR FOR
+			  SELECT
+				(
+				CASE WHEN IN_SERVICE_WISE=0 THEN
+					(case 
+						when (SELECT GL_MODULE_NAME FROM GL_MODULE glModule WHERE GL_MODULE_ID=QUERY_MODID) is NULL then coalesce(QUERY_MODID,'Free')
+						else (SELECT GL_MODULE_NAME FROM GL_MODULE glModule WHERE GL_MODULE_ID=QUERY_MODID)||' ('||QUERY_MODID||')'
+					end )
+					WHEN IN_SERVICE_WISE=1 THEN
+						(SELECT coalesce(SERVICE_SHORTNAME,SERVICE_NAME) FROM SERVICE WHERE SERVICE_ID=QUERY_MODID)
+					WHEN IN_SERVICE_WISE=2 THEN
+						(SELECT coalesce(SERVICE_SHORTNAME,SERVICE_NAME) FROM SERVICE WHERE SERVICE_ID=DIR_QUERY_SERVICE_ID)||'-'||QUERY_MODID
+				END
+				) MOD_NAME,
+				COUNT(DISTINCT FK_GLUSR_USR_ID) QUERY_ID,
+				(CASE WHEN IN_SERVICE_WISE=2 THEN DIR_QUERY_SERVICE_ID ELSE '-1'  END)DIR_QUERY_SERVICE_ID,
+				NULL,NULL,NULL,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 0 then FK_GLUSR_USR_ID else NULL end) else NULL end)) CNTWEBINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 2 then FK_GLUSR_USR_ID else NULL end) else NULL end)) CNTCALLINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 1 then FK_GLUSR_USR_ID else NULL end) else NULL end)) CNTSMSINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 0 then FK_GLUSR_USR_ID else NULL end) else NULL end)) CNTWEBFOREIGN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 2 then FK_GLUSR_USR_ID else NULL end) else NULL end)) CNTCALLFOREIGN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 1 then FK_GLUSR_USR_ID else NULL end) else NULL end)) CNTSMSFOREIGN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then FK_GLUSR_USR_ID else NULL end)) CNTINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then FK_GLUSR_USR_ID else NULL end)) CNTFOREIGN ,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case when QUERY_TYPE_FLAG=3 then FK_GLUSR_USR_ID else NULL end) else NULL end)) CNTSMSNINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 3 then FK_GLUSR_USR_ID else NULL end) else NULL end)) CNTSMSNFOREIGN,
+        MAX(UNQ_ENQ_SND_CNT) UNQ_ENQ_SND_CNT
+		  FROM
+		  (
+      Select Query_Id, Fk_Glusr_Usr_Id, Query_Rcv_Glusr_Usr_Id, Query_Modid, 
+      Dir_Query_Custtype_Weight, Query_Type_Flag, Date_R, Query_Isindian, Dir_Query_Service_Id, COUNT(DISTINCT FK_GLUSR_USR_ID) OVER () UNQ_ENQ_SND_CNT
+      FROM
+      (
+			SELECT
+            QUERY_ID,coalesce(TO_CHAR(FK_GLUSR_USR_ID),S_MOBILE)FK_GLUSR_USR_ID,QUERY_RCV_GLUSR_USR_ID,
+			(case IN_SERVICE_WISE when 0 then QUERY_MODID when 1 then DIR_QUERY_SERVICE_ID::text else QUERY_MODID end)QUERY_MODID,DIR_QUERY_CUSTTYPE_WEIGHT,
+            0 QUERY_TYPE_FLAG,DATE_R,DIR_QUERY_IS_INDIAN QUERY_ISINDIAN,(case IN_SERVICE_WISE when 0 then NULL else DIR_QUERY_SERVICE_ID end)DIR_QUERY_SERVICE_ID
+			FROM
+					DIR_QUERY
+			WHERE
+					date(DATE_R) BETWEEN date(IN_START_DATE) AND date(IN_END_DATE)
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE QUERY_MODID END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+						SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE DIR_QUERY_CUSTTYPE_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(DIR_QUERY_SNDR_COUNTRY_ISO) END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+/*
+						
+					AND DECODE(IN_INDIAN,NULL,-999,coalesce(DIR_QUERY_IS_INDIAN,1))=DECODE(IN_INDIAN,NULL,-999,0,-1,1)
+					AND DECODE (IN_SEARCH_PARAM,0,DECODE(INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp'),0,0,1),
+          1,DECODE(INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp'),0,1,0),
+          2,DECODE(INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile'),0,0,1),
+          3,DECODE(INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile'),0,1,0),1) = 1
+					AND DECODE(coalesce(IN_QUERY_TYPE,-9),0,1,-9,1,0)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE DIR_QUERY_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+
+
+*/
+		AND (case when IN_INDIAN is NULL then -999 else coalesce(DIR_QUERY_IS_INDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when 0 then -1 else 1 end)
+					AND (case IN_SEARCH_PARAM when 0 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 0 else 1 end),
+          when 1 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 1 else 0 end),
+          when 2 then (case INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile') when 0 then 0 else 1 end),
+          when 3 then (case INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile') when 0 then 1 else 0 end) else 1 end) = 1
+					AND (case coalesce(IN_QUERY_TYPE,-9) when 0 then 1 when -9 then 1 else 0 end)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE DIR_QUERY_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+
+
+
+
+						
+		UNION ALL
+        SELECT
+          IIL_ENQUIRY_SMS_ID,coalesce(TO_CHAR(IIL_ENQUIRY_SENDER_GLID),IIL_ENQUIRY_SENDER_MOBILE),IIL_ENQUIRY_RECV_GLID,
+		  (case IN_SERVICE_WISE when 0 then IIL_ENQUIRY_SMS_MODID when 1 then IIL_ENQUIRY_SMS_SERVICE_ID::text else IIL_ENQUIRY_SMS_MODID end)IIL_ENQUIRY_SMS_MODID,
+          IIL_ENQUIRY_RECV_CST_WEIGHT,3,IIL_ENQUIRY_SMS_DATE,IIL_ENQUIRY_SMS_IS_INDIAN,(case IN_SERVICE_WISE when 0 then NULL else IIL_ENQUIRY_SMS_SERVICE_ID end)IIL_ENQUIRY_SMS_SERVICE_ID
+			FROM
+				IIL_ENQUIRY_SMS
+			WHERE
+					date(IIL_ENQUIRY_SMS_DATE) BETWEEN date(IN_START_DATE) AND date(IN_END_DATE)
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE IIL_ENQUIRY_SMS_MODID END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+				SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE IIL_ENQUIRY_RECV_CST_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(IIL_ENQUIRY_SENDER_COUNTRY) END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+			AND (case when IN_INDIAN is NULL then -999 else coalesce(IIL_ENQUIRY_SMS_IS_INDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when IN_INDIAN=0 then -1 else 1 end)
+					AND (case IN_SEARCH_PARAM when 0 then (case position('search.mp' in coalesce(IIL_ENQUIRY_SMS_CURRENT_URL,IIL_ENQUIRY_SMS_REF_URL)) when 0 then 0 else 1 end)
+					when 1 tehn (case position('search.mp' in coalesce(IIL_ENQUIRY_SMS_CURRENT_URL,IIL_ENQUIRY_SMS_REF_URL)) when 0 then 1 else 0 end) else 1 end) = 1
+					--AND DECODE(coalesce(IN_QUERY_TYPE,-9),3,1,-9,1,0)=1
+AND (case coalesce(IN_QUERY_TYPE,-9) WHEN 3 THEN 1 WHEN -9 THEN 1 ELSE 0 END)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE IIL_ENQUIRY_SMS_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+		UNION ALL
+			SELECT
+            CALL_ID,coalesce(TO_CHAR(CALLER_FK_GLUSER_USR_ID),CALLER_MOBILE),RECEIVER_FK_GLUSR_USR_ID,
+			DECODE(IN_SERVICE_WISE,0,CALL_REFERRER_MODID,1,TO_CHAR(GLOBAL_CALL_RECORDS_SERVICE_ID),CALL_REFERRER_MODID)CALL_REFERRER_MODID,
+			GCR_CUSTTYPE_WEIGHT,
+            DECODE(CALL_SERVICE_TYPE,'SMS',1,2),CALL_DATETIME,GLOBAL_CALL_RECORDS_ISINDIAN,DECODE(IN_SERVICE_WISE,0,NULL,GLOBAL_CALL_RECORDS_SERVICE_ID)GLOBAL_CALL_RECORDS_SERVICE_ID
+			FROM
+					GLOBAL_CALL_RECORDS
+			WHERE
+					CALL_BATCH_PROCESSED=1 AND CALL_IMART_OR_HELLOTD = 'IMART'  AND (CALL_SMS_SENT = 'Buyer' OR CALL_SMS_SENT IS NULL)
+					AND date(CALL_DATETIME) BETWEEN date(IN_START_DATE) AND date(IN_END_DATE)
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE CALL_REFERRER_MODID END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+			SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE GCR_CUSTTYPE_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(CALLER_COUNTRY_ISO) END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+					SELECT 'XXX' /*FROM DUAL*/)
+			AND (case when IN_INDIAN is NULL then -999 else coalesce(GLOBAL_CALL_RECORDS_ISINDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when IN_INDIAN=0 then -1 else 1 end)
+					AND (case when IN_SEARCH_PARAM is NULL then 1 when IN_SEARCH_PARAM=3 then 1 else 0 end)=1
+					AND (case coalesce(IN_QUERY_TYPE,-9) when 1 then 1 when -9 then 1 else 0 end)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE GLOBAL_CALL_RECORDS_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+		UNION ALL
+			SELECT
+            PNS_CALL_RECORD_ID,coalesce(TO_CHAR(PNS_CALL_CALLER_GLUSR_ID),PNS_CALL_CALLER_NUMBER),PNS_CALL_RECEIVER_GLUSR_ID,
+			(case IN_SERVICE_WISE when 0 then 'PNS' when 1 then PNS_CALL_RECORDS_SERVICE_ID::text else 'PNS' end),
+			NULL,2,
+            PNS_CALL_RECORD_DATE,PNS_CALL_ISINDIAN,(case IN_SERVICE_WISE when 0 then NULL else PNS_CALL_RECORDS_SERVICE_ID end)PNS_CALL_RECORDS_SERVICE_ID
+			FROM
+					PNS_CALL_RECORDS
+			WHERE
+					PNS_CALL_STATUS IN ('S','F')
+					AND date(PNS_CALL_RECORD_DATE) BETWEEN date(IN_START_DATE) AND date(IN_END_DATE)
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE 'PNS' END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+			SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE PNS_CUSTTYPE_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM('IN') END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+			AND (case when IN_INDIAN is NULL then -999 else coalesce(PNS_CALL_ISINDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when IN_INDIAN=0 then -1 else 1 end)
+					AND (case when IN_SEARCH_PARAM is NULL then 1 when IN_SEARCH_PARAM=3 then 1 else 0)=1
+					AND (case coalesce(IN_QUERY_TYPE,-9) when 2 then 1 when -9 then 1 else 0 end)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE PNS_CALL_RECORDS_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+		)) GROUP BY QUERY_MODID,DIR_QUERY_SERVICE_ID
+		ORDER BY QUERY_MODID,DIR_QUERY_SERVICE_ID;
+		ELSIF IN_COUNT_UNQ_RECEIVER=1 THEN
+			OPEN OUT_CUR FOR
+			SELECT
+				(
+				CASE WHEN IN_SERVICE_WISE=0 THEN
+					(case 
+						when (SELECT GL_MODULE_NAME FROM GL_MODULE glModule WHERE GL_MODULE_ID=QUERY_MODID) is NULL then coalesce(QUERY_MODID,'Free')
+						else (SELECT GL_MODULE_NAME FROM GL_MODULE glModule WHERE GL_MODULE_ID=QUERY_MODID)||' ('||QUERY_MODID||')'
+					end )
+					WHEN IN_SERVICE_WISE=1 THEN
+						(SELECT coalesce(SERVICE_SHORTNAME,SERVICE_NAME) FROM SERVICE WHERE SERVICE_ID=QUERY_MODID)
+					WHEN IN_SERVICE_WISE=2 THEN
+						(SELECT coalesce(SERVICE_SHORTNAME,SERVICE_NAME) FROM SERVICE WHERE SERVICE_ID=DIR_QUERY_SERVICE_ID)||'-'||QUERY_MODID
+				END
+				) MOD_NAME,
+				COUNT(DISTINCT QUERY_RCV_GLUSR_USR_ID) QUERY_ID,
+				(CASE WHEN IN_SERVICE_WISE=2 THEN DIR_QUERY_SERVICE_ID ELSE '-1'  END)DIR_QUERY_SERVICE_ID,
+				NULL,NULL,NULL,
+				
+			/*	COUNT(DISTINCT DECODE(coalesce(QUERY_ISINDIAN,0),-1,DECODE(QUERY_TYPE_FLAG,0,QUERY_RCV_GLUSR_USR_ID,NULL),NULL)) CNTWEBINDIAN,
+				COUNT(DISTINCT DECODE(coalesce(QUERY_ISINDIAN,0),-1,DECODE(QUERY_TYPE_FLAG,2,QUERY_RCV_GLUSR_USR_ID,NULL),NULL)) CNTCALLINDIAN,
+				COUNT(DISTINCT DECODE(coalesce(QUERY_ISINDIAN,0),-1,DECODE(QUERY_TYPE_FLAG,1,QUERY_RCV_GLUSR_USR_ID,NULL),NULL)) CNTSMSINDIAN,
+				COUNT(DISTINCT DECODE(coalesce(QUERY_ISINDIAN,0),0,DECODE(QUERY_TYPE_FLAG,0,QUERY_RCV_GLUSR_USR_ID,NULL),NULL)) CNTWEBFOREIGN,
+				COUNT(DISTINCT DECODE(coalesce(QUERY_ISINDIAN,0),0,DECODE(QUERY_TYPE_FLAG,2,QUERY_RCV_GLUSR_USR_ID,NULL),NULL)) CNTCALLFOREIGN,
+				COUNT(DISTINCT DECODE(coalesce(QUERY_ISINDIAN,0),0,DECODE(QUERY_TYPE_FLAG,1,QUERY_RCV_GLUSR_USR_ID,NULL),NULL)) CNTSMSFOREIGN,
+				COUNT(DISTINCT DECODE(coalesce(QUERY_ISINDIAN,0),-1,QUERY_RCV_GLUSR_USR_ID,NULL)) CNTINDIAN,
+				COUNT(DISTINCT DECODE(coalesce(QUERY_ISINDIAN,0),0,QUERY_RCV_GLUSR_USR_ID,NULL)) CNTFOREIGN ,
+				COUNT(DISTINCT DECODE(coalesce(QUERY_ISINDIAN,0),-1,DECODE(QUERY_TYPE_FLAG,3,QUERY_RCV_GLUSR_USR_ID,NULL),NULL)) CNTSMSNINDIAN,
+				COUNT(DISTINCT DECODE(coalesce(QUERY_ISINDIAN,0),0,DECODE(QUERY_TYPE_FLAG,3,QUERY_RCV_GLUSR_USR_ID,NULL),NULL)) CNTSMSNFOREIGN,
+*/
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 0 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTWEBINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 2 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTCALLINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 1 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTSMSINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 0 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTWEBFOREIGN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 2 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTCALLFOREIGN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 1 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTSMSFOREIGN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then QUERY_RCV_GLUSR_USR_ID else NULL end)) CNTINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then QUERY_RCV_GLUSR_USR_ID else NULL end)) CNTFOREIGN ,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 3 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTSMSNINDIAN,
+				COUNT(DISTINCT (case coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 3 then QUERY_RCV_GLUSR_USR_ID else NULL end) else NULL end)) CNTSMSNFOREIGN,
+
+        MAX(UNQ_ENQ_SND_CNT) UNQ_ENQ_SND_CNT
+		  FROM
+		  (
+      Select Query_Id, Fk_Glusr_Usr_Id, Query_Rcv_Glusr_Usr_Id, Query_Modid, 
+      Dir_Query_Custtype_Weight, Query_Type_Flag, Date_R, Query_Isindian, Dir_Query_Service_Id, COUNT(DISTINCT QUERY_RCV_GLUSR_USR_ID) OVER () UNQ_ENQ_SND_CNT
+      FROM
+      (
+			SELECT
+					QUERY_ID,coalesce(TO_CHAR(FK_GLUSR_USR_ID),S_MOBILE)FK_GLUSR_USR_ID,QUERY_RCV_GLUSR_USR_ID,
+					(case IN_SERVICE_WISE when 0 then QUERY_MODID when 1 then DIR_QUERY_SERVICE_ID::text else QUERY_MODID end)QUERY_MODID,DIR_QUERY_CUSTTYPE_WEIGHT,
+          0 QUERY_TYPE_FLAG,DATE_R,DIR_QUERY_IS_INDIAN QUERY_ISINDIAN,(case IN_SERVICE_WISE when 0 then NULL else DIR_QUERY_SERVICE_ID end)DIR_QUERY_SERVICE_ID
+			FROM
+					DIR_QUERY
+			WHERE
+					date(DATE_R) BETWEEN date(IN_START_DATE) AND date(IN_END_DATE)
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE QUERY_MODID END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+						SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE DIR_QUERY_CUSTTYPE_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(DIR_QUERY_SNDR_COUNTRY_ISO) END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+/*
+
+					AND DECODE(IN_INDIAN,NULL,-999,coalesce(DIR_QUERY_IS_INDIAN,1))=DECODE(IN_INDIAN,NULL,-999,0,-1,1)
+					AND DECODE (IN_SEARCH_PARAM,0,DECODE(INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp'),0,0,1),
+          1,DECODE(INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp'),0,1,0),
+          2,DECODE(INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile'),0,0,1),
+          3,DECODE(INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile'),0,1,0),1) = 1
+					AND DECODE(coalesce(IN_QUERY_TYPE,-9),0,1,-9,1,0)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE DIR_QUERY_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+
+*/
+
+		AND (case when IN_INDIAN is NULL then -999 else coalesce(DIR_QUERY_IS_INDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when 0 then -1 else 1 end)
+					AND (case IN_SEARCH_PARAM when 0 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 0 else 1 end),
+          when 1 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 1 else 0 end),
+          when 2 then (case INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile') when 0 then 0 else 1 end),
+          when 3 then (case INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile') when 0 then 1 else 0 end) else 1 end) = 1
+					AND (case coalesce(IN_QUERY_TYPE,-9) when 0 then 1 when -9 then 1 else 0 end)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE DIR_QUERY_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+
+		UNION ALL
+			SELECT
+        IIL_ENQUIRY_SMS_ID,coalesce(TO_CHAR(IIL_ENQUIRY_SENDER_GLID),IIL_ENQUIRY_SENDER_MOBILE),IIL_ENQUIRY_RECV_GLID,
+		DECODE(IN_SERVICE_WISE,0,IIL_ENQUIRY_SMS_MODID,1,TO_CHAR(IIL_ENQUIRY_SMS_SERVICE_ID),IIL_ENQUIRY_SMS_MODID)IIL_ENQUIRY_SMS_MODID,
+        IIL_ENQUIRY_RECV_CST_WEIGHT,3,IIL_ENQUIRY_SMS_DATE,IIL_ENQUIRY_SMS_IS_INDIAN,DECODE(IN_SERVICE_WISE,0,NULL,IIL_ENQUIRY_SMS_SERVICE_ID)IIL_ENQUIRY_SMS_SERVICE_ID
+			FROM
+				IIL_ENQUIRY_SMS
+			WHERE
+					date(IIL_ENQUIRY_SMS_DATE) BETWEEN date(IN_START_DATE) AND date(IN_END_DATE)
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE IIL_ENQUIRY_SMS_MODID END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+						SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE IIL_ENQUIRY_RECV_CST_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(IIL_ENQUIRY_SENDER_COUNTRY) END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+					AND DECODE(IN_INDIAN,NULL,-999,coalesce(IIL_ENQUIRY_SMS_IS_INDIAN,1))=(case when IN_INDIAN is NULL then -999 when 0 then -1 else 1 end)
+					AND DECODE (IN_SEARCH_PARAM,0,DECODE(INSTR(coalesce(IIL_ENQUIRY_SMS_CURRENT_URL,IIL_ENQUIRY_SMS_REF_URL),'search.mp'),0,0,1),
+					1,DECODE(INSTR(coalesce(IIL_ENQUIRY_SMS_CURRENT_URL,IIL_ENQUIRY_SMS_REF_URL),'search.mp'),0,1,0),1) = 1
+					--AND DECODE(coalesce(IN_QUERY_TYPE,-9),3,1,-9,1,0)=1
+AND (case coalesce(IN_QUERY_TYPE,-9) WHEN 3 THEN 1 WHEN -9 THEN 1 ELSE 0 END)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE IIL_ENQUIRY_SMS_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/)
+		UNION ALL
+			SELECT
+					CALL_ID,coalesce(TO_CHAR(CALLER_FK_GLUSER_USR_ID),CALLER_MOBILE),RECEIVER_FK_GLUSR_USR_ID,
+					DECODE(IN_SERVICE_WISE,0,CALL_REFERRER_MODID,1,TO_CHAR(GLOBAL_CALL_RECORDS_SERVICE_ID),CALL_REFERRER_MODID)CALL_REFERRER_MODID,
+					GCR_CUSTTYPE_WEIGHT,
+DECODE(CALL_SERVICE_TYPE,'SMS',1,2),CALL_DATETIME,GLOBAL_CALL_RECORDS_ISINDIAN,DECODE(IN_SERVICE_WISE,0,NULL,GLOBAL_CALL_RECORDS_SERVICE_ID)GLOBAL_CALL_RECORDS_SERVICE_ID
+			FROM
+					GLOBAL_CALL_RECORDS
+			WHERE
+					CALL_BATCH_PROCESSED=1 AND CALL_IMART_OR_HELLOTD = 'IMART'  AND (CALL_SMS_SENT = 'Buyer' OR CALL_SMS_SENT IS NULL)
+					AND date(CALL_DATETIME) BETWEEN date(IN_START_DATE) AND date(IN_END_DATE)
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE CALL_REFERRER_MODID END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+						SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE GCR_CUSTTYPE_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(CALLER_COUNTRY_ISO) END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+					AND (IN_INDIAN,NULL,-999,coalesce(GLOBAL_CALL_RECORDS_ISINDIAN,1))=(case when IN_INDIAN is NULL then -999 when IN_INDIAN=0 then -1 else 1 end)
+					AND (case when IN_SEARCH_PARAM is NULL tehn 1 wehn IN_SEARCH_PARAM=3 then 1 else 0 end)=1
+					AND (case coalesce(IN_QUERY_TYPE,-9) when 1 then 1 when -9 then 1 else 0 end)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE GLOBAL_CALL_RECORDS_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+		UNION ALL
+			SELECT
+					PNS_CALL_RECORD_ID,coalesce(TO_CHAR(PNS_CALL_CALLER_GLUSR_ID),PNS_CALL_CALLER_NUMBER),PNS_CALL_RECEIVER_GLUSR_ID,
+					(case IN_SERVICE_WISE when 0 then 'PNS' when 1 then PNS_CALL_RECORDS_SERVICE_ID::text else 'PNS' end)
+					,NULL,2,
+PNS_CALL_RECORD_DATE,PNS_CALL_ISINDIAN,(case IN_SERVICE_WISE when 0 then NULL else PNS_CALL_RECORDS_SERVICE_ID end)PNS_CALL_RECORDS_SERVICE_ID
+			FROM
+					PNS_CALL_RECORDS
+			WHERE
+					PNS_CALL_STATUS IN ('S','F')
+					AND date(PNS_CALL_RECORD_DATE) BETWEEN date(IN_START_DATE) AND date(IN_END_DATE)
+					AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE 'PNS' END) IN
+					(
+						SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+						FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+						UNION
+						SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+						Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+					)
+					AND
+					(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE PNS_CUSTTYPE_WEIGHT END) IN(
+						  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+						 (
+							  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+							  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+							  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+						 )WHERE CUST_ID=CUSTTYPE_ID
+						UNION
+						SELECT -1 /*FROM DUAL*/)
+					AND
+					(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM('IN') END) IN(
+						 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+						 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+						UNION
+						SELECT 'XXX' /*FROM DUAL*/)
+					AND (case when IN_INDIAN is NULL then -999 else coalesce(PNS_CALL_ISINDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when IN_INDIAN=0 then -1 else 1 end)
+					AND (case when IN_SEARCH_PARAM is NULL tehn 1 when IN_SEARCH_PARAM=3 then 1 else 0 end)=1
+					AND (case coalesce(IN_QUERY_TYPE,-9) when 2 then 1 when -9 then 1 else 0 end)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE PNS_CALL_RECORDS_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+			)) GROUP BY QUERY_MODID,DIR_QUERY_SERVICE_ID
+		ORDER BY QUERY_MODID,DIR_QUERY_SERVICE_ID;
+		ELSE
+			  OPEN OUT_CUR FOR
+			  SELECT
+					(
+				CASE WHEN IN_SERVICE_WISE=0 THEN
+					(case 
+						when (SELECT GL_MODULE_NAME FROM GL_MODULE glModule WHERE GL_MODULE_ID=QUERY_MODID) is NULL then coalesce(QUERY_MODID,'Free') else 
+						(SELECT GL_MODULE_NAME FROM GL_MODULE glModule WHERE GL_MODULE_ID=QUERY_MODID)||' ('||QUERY_MODID||')'
+					end )
+					WHEN IN_SERVICE_WISE=1 THEN
+						(SELECT coalesce(SERVICE_SHORTNAME,SERVICE_NAME) FROM SERVICE WHERE SERVICE_ID=QUERY_MODID)
+					WHEN IN_SERVICE_WISE=2 THEN
+						(SELECT coalesce(SERVICE_SHORTNAME,SERVICE_NAME) FROM SERVICE WHERE SERVICE_ID=DIR_QUERY_SERVICE_ID)||'-'||QUERY_MODID
+				END
+				) MOD_NAME,
+					COUNT(QUERY_ID) QUERY_ID,
+					(CASE WHEN IN_SERVICE_WISE=2 THEN TO_CHAR(DIR_QUERY_SERVICE_ID) ELSE NULL  END)DIR_QUERY_SERVICE_ID,
+					TO_CHAR(DATE_R,'MON-YYYY'),
+					TO_CHAR(DATE_R,'YYYY'),
+					TO_CHAR(DATE_R,'MM'),
+					SUM((case coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 0 tehn 1 else 0 end) else 0 end)) CNTWEBINDIAN,
+					SUM(case (coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 2 then 1 else 0 end) else 0 end)) CNTCALLINDIAN,
+					SUM(case (coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 1 then 1 else 0 end) else 0 end)) CNTSMSINDIAN,
+					SUM(case (coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 0 then 1 else 0 end) else 0 end)) CNTWEBFOREIGN,
+					SUM(case (coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 2 then 1 else 0 end) else 0 end)) CNTCALLFOREIGN,
+					SUM(case (coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 1 then 1 else 0 end) else 0 end)) CNTSMSFOREIGN,
+					SUM(case (coalesce(QUERY_ISINDIAN,0) when -1 when 1 then 0 end)) CNTINDIAN,
+					SUM(case (coalesce(QUERY_ISINDIAN,0) when 0 when 1 then 0 end)) CNTFOREIGN ,
+					SUM(case (coalesce(QUERY_ISINDIAN,0) when -1 then (case QUERY_TYPE_FLAG when 3 then 1 else 0 end) else 0 end)) CNTSMSNINDIAN,
+					SUM(case (coalesce(QUERY_ISINDIAN,0) when 0 then (case QUERY_TYPE_FLAG when 3 then 1 else 0 end) else 0 end)) CNTSMSNFOREIGN
+
+
+		  FROM
+			(
+				Select Query_Id, Fk_Glusr_Usr_Id, Query_Rcv_Glusr_Usr_Id,
+				Query_Modid, Dir_Query_Custtype_Weight, Query_Type_Flag, Date_R, Query_Isindian, Dir_Query_Service_Id, COUNT(1) OVER (PARTITION BY Query_Rcv_Glusr_Usr_Id) TOT_GLUSR_ENQ_CNT
+				FROM
+				(
+					SELECT
+					QUERY_ID,coalesce(TO_CHAR(FK_GLUSR_USR_ID),S_MOBILE)FK_GLUSR_USR_ID,QUERY_RCV_GLUSR_USR_ID,
+					(case IN_SERVICE_WISE when 0 then QUERY_MODID when 1 then DIR_QUERY_SERVICE_ID::text else QUERY_MODID end)QUERY_MODID,DIR_QUERY_CUSTTYPE_WEIGHT,
+					0 QUERY_TYPE_FLAG,DATE_R,DIR_QUERY_IS_INDIAN QUERY_ISINDIAN,(case IN_SERVICE_WISE when 0 then NULL else DIR_QUERY_SERVICE_ID end)DIR_QUERY_SERVICE_ID
+					FROM
+						DIR_QUERY
+					WHERE
+						date(DATE_R) BETWEEN date(IN_START_DATE) AND date(IN_END_DATE)
+						AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE QUERY_MODID END) IN
+						(
+							SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+							FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+							CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+							UNION
+							SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+							Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+						)
+						AND
+						(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE DIR_QUERY_CUSTTYPE_WEIGHT END) IN(
+							  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+							 (
+								  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+								  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+								  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+							 )WHERE CUST_ID=CUSTTYPE_ID
+							UNION
+							SELECT -1 /*FROM DUAL*/)
+						AND
+						(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(DIR_QUERY_SNDR_COUNTRY_ISO) END) IN(
+							 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+							 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+							CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+							UNION
+							SELECT 'XXX' /*FROM DUAL*/)
+/*
+
+						AND DECODE(IN_INDIAN,NULL,-999,coalesce(DIR_QUERY_IS_INDIAN,1))=DECODE(IN_INDIAN,NULL,-999,0,-1,1)
+						AND DECODE (IN_SEARCH_PARAM,0,DECODE(INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp'),0,0,1),
+            1,DECODE(INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp'),0,1,0),
+            2,DECODE(INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile'),0,0,1),
+            3,DECODE(INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile'),0,1,0),1) = 1
+						AND DECODE(coalesce(IN_QUERY_TYPE,-9),0,1,-9,1,0)=1
+						AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE DIR_QUERY_SERVICE_ID END ) IN (
+							SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+							FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+							CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+							UNION
+							SELECT '-1' /*FROM DUAL*/
+							)
+
+*/
+
+
+
+		AND (case when IN_INDIAN is NULL then -999 else coalesce(DIR_QUERY_IS_INDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when 0 then -1 else 1 end)
+					AND (case IN_SEARCH_PARAM when 0 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 0 else 1 end),
+          when 1 then (case INSTR(coalesce(QUERY_REF_CURRENT_URL,QUERY_REFERENCE_URL),'search.mp') when 0 then 1 else 0 end),
+          when 2 then (case INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile') when 0 then 0 else 1 end),
+          when 3 then (case INSTR(coalesce(QUERY_REFERENCE_TEXT,'abc'),'#mobile') when 0 then 1 else 0 end) else 1 end) = 1
+					AND (case coalesce(IN_QUERY_TYPE,-9) when 0 then 1 when -9 then 1 else 0 end)=1
+					AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE DIR_QUERY_SERVICE_ID END ) IN (
+						SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+						FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+						CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+						UNION
+						SELECT '-1' /*FROM DUAL*/
+						)
+
+
+
+
+
+
+					UNION ALL
+					SELECT
+					IIL_ENQUIRY_SMS_ID,coalesce(TO_CHAR(IIL_ENQUIRY_SENDER_GLID),IIL_ENQUIRY_SENDER_MOBILE),IIL_ENQUIRY_RECV_GLID,
+					DECODE(IN_SERVICE_WISE,0,IIL_ENQUIRY_SMS_MODID,1,TO_CHAR(IIL_ENQUIRY_SMS_SERVICE_ID),IIL_ENQUIRY_SMS_MODID)IIL_ENQUIRY_SMS_MODID,
+					IIL_ENQUIRY_RECV_CST_WEIGHT,3,IIL_ENQUIRY_SMS_DATE,IIL_ENQUIRY_SMS_IS_INDIAN,DECODE(IN_SERVICE_WISE,0,NULL,IIL_ENQUIRY_SMS_SERVICE_ID)IIL_ENQUIRY_SMS_SERVICE_ID
+					FROM
+						IIL_ENQUIRY_SMS
+					WHERE
+						date(IIL_ENQUIRY_SMS_DATE) BETWEEN date(IN_START_DATE) AND date(IN_END_DATE)
+						AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE IIL_ENQUIRY_SMS_MODID END) IN
+						(
+							SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+							FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+							CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+							UNION
+							SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+							Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+						)
+						AND
+						(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE IIL_ENQUIRY_RECV_CST_WEIGHT END) IN(
+							  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+							 (
+								  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+								  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+								  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+							 )WHERE CUST_ID=CUSTTYPE_ID
+							UNION
+							SELECT -1 /*FROM DUAL*/)
+						AND
+						(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(IIL_ENQUIRY_SENDER_COUNTRY) END) IN(
+							 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+							 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+							CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+							UNION
+							SELECT 'XXX' /*FROM DUAL*/)
+
+AND (case when IN_INDIAN is NULL then -999 else coalesce(IIL_ENQUIRY_SMS_IS_INDIAN,1) end)=
+(case when IN_INDIAN is NULL then -999 when 0 then -1 else 1 end)						AND  
+(case IN_SEARCH_PARAM when 0 then (case position('search.mp' in coalesce(IIL_ENQUIRY_SMS_CURRENT_URL,IIL_ENQUIRY_SMS_REF_URL)) when 0 then 0 else 1 end)
+						when 1 then (case position('search.mp' in coalesce(IIL_ENQUIRY_SMS_CURRENT_URL,IIL_ENQUIRY_SMS_REF_URL)) when 0 then 1 else 0 end) else 1 end) = 1
+						--AND DECODE(coalesce(IN_QUERY_TYPE,-9),3,1,-9,1,0)=1
+AND (case coalesce(IN_QUERY_TYPE,-9) WHEN 3 THEN 1 WHEN -9 THEN 1 ELSE 0 END)=1
+						AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE IIL_ENQUIRY_SMS_SERVICE_ID END ) IN (
+							SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+							FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+							CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+							UNION
+							SELECT '-1' /*FROM DUAL*/
+							)
+
+					UNION ALL
+					SELECT
+						CALL_ID,coalesce(TO_CHAR(CALLER_FK_GLUSER_USR_ID),CALLER_MOBILE),RECEIVER_FK_GLUSR_USR_ID,
+	(case IN_SERVICE_WISE when 0 then CALL_REFERRER_MODID when 1 then GLOBAL_CALL_RECORDS_SERVICE_ID::text else CALL_REFERRER_MODID end)CALL_REFERRER_MODID,
+						GCR_CUSTTYPE_WEIGHT,
+						(case CALL_SERVICE_TYPE when 'SMS' then 1 else 2 end),CALL_DATETIME,GLOBAL_CALL_RECORDS_ISINDIAN,
+(case IN_SERVICE_WISE when 0 then NULL else GLOBAL_CALL_RECORDS_SERVICE_ID end)GLOBAL_CALL_RECORDS_SERVICE_ID
+					FROM
+						GLOBAL_CALL_RECORDS
+					WHERE
+						CALL_BATCH_PROCESSED=1 AND CALL_IMART_OR_HELLOTD = 'IMART'  AND (CALL_SMS_SENT = 'Buyer' OR CALL_SMS_SENT IS NULL)
+						AND date(CALL_DATETIME) BETWEEN date(IN_START_DATE) AND date(IN_END_DATE)
+						AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE CALL_REFERRER_MODID END) IN
+						(
+							SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+							FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+							CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+							UNION
+							SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+							Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+						)
+						AND
+						(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE GCR_CUSTTYPE_WEIGHT END) IN(
+							  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+							 (
+								  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+								  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+								  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+							 )WHERE CUST_ID=CUSTTYPE_ID
+							UNION
+							SELECT -1 /*FROM DUAL*/)
+						AND
+						(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM(CALLER_COUNTRY_ISO) END) IN(
+							 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+							 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+							CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+							UNION
+							SELECT 'XXX' /*FROM DUAL*/)
+						--AND DECODE(IN_INDIAN,NULL,-999,coalesce(GLOBAL_CALL_RECORDS_ISINDIAN,1))=DECODE(IN_INDIAN,NULL,-999,0,-1,1)
+			AND  (case when IN_INDIAN is NULL then -999 else coalesce(GLOBAL_CALL_RECORDS_ISINDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when IN_INDIAN=0 then -1 else 1 end)
+						--AND DECODE (IN_SEARCH_PARAM,NULL,1,3,1,0)=1
+						AND (case when IN_SEARCH_PARAM is NULL then 1 when IN_SEARCH_PARAM=3 then 1 else 0 end)=1
+						AND (case coalesce(IN_QUERY_TYPE,-9) when 1 then 1 when -9 then 1 else 0 end)=1
+						AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE GLOBAL_CALL_RECORDS_SERVICE_ID END ) IN (
+							SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+							FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+							CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+							UNION
+							SELECT '-1' /*FROM DUAL*/
+							)
+					UNION ALL
+					SELECT
+						PNS_CALL_RECORD_ID,coalesce(TO_CHAR(PNS_CALL_CALLER_GLUSR_ID),PNS_CALL_CALLER_NUMBER),PNS_CALL_RECEIVER_GLUSR_ID,
+						(case IN_SERVICE_WISE when 0 then 'PNS' when 1 then PNS_CALL_RECORDS_SERVICE_ID::text else 'PNS' end)
+						,NULL,2,
+					PNS_CALL_RECORD_DATE,PNS_CALL_ISINDIAN,(case IN_SERVICE_WISE when 0 then NULL else PNS_CALL_RECORDS_SERVICE_ID end)PNS_CALL_RECORDS_SERVICE_ID
+					FROM
+						PNS_CALL_RECORDS
+					WHERE
+						PNS_CALL_STATUS IN ('S','F')
+						AND date(PNS_CALL_RECORD_DATE) BETWEEN date(IN_START_DATE) AND date(IN_END_DATE)
+						AND( CASE WHEN IN_MODULE_LIST IS NULL THEN 'ALL' ELSE 'PNS' END) IN
+						(
+							SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+							FROM (SELECT (CASE WHEN IN_MODULE_LIST IS NOT NULL THEN ','||IN_MODULE_LIST||',' ELSE '' END) MY_MODULE_LIST /*FROM DUAL*/)
+							CONNECT BY LEVEL <(LENGTH(MY_MODULE_LIST)-LENGTH(REPLACE(MY_MODULE_LIST,',','')))
+							UNION
+							SELECT GL_MODULE_ID FROM GL_MODULE WHERE GL_MODULE_MODID_TYP=(SELECT (case IN_MODULE_LIST when 'MKTP' then 'MARKETPLACE' when 'NMKTP' then 'NON-MARKETPLACE' end) )
+							Union
+            SELECT Gl_Module_Id From Gl_Module Where Gl_Module_Group_New In 
+            (
+            SELECT SUBSTR(MY_MODULE_LIST,INSTR(MY_MODULE_LIST,',',1,ROWNUM)+1,(INSTR(MY_MODULE_LIST,',',1,ROWNUM+1)-INSTR(MY_MODULE_LIST,',',1,ROWNUM))-1)MODULE_ID
+            From (Select (Case When In_Module_List Is Not Null Then ','||In_Module_List||',' Else '' End) My_Module_List /*FROM DUAL*/)
+            Connect By Level <(Length(My_Module_List)-Length(Replace(My_Module_List,',','')))
+            )
+						UNION
+						SELECT 'ALL' /*FROM DUAL*/
+						)
+						AND
+						(CASE WHEN IN_CUSTOMER_TYPE IS NULL THEN -1 ELSE PNS_CUSTTYPE_WEIGHT END) IN(
+							  SELECT CUSTTYPE_WEIGHT FROM CUSTTYPE ,
+							 (
+								  SELECT TO_NUMBER(SUBSTR(MY_CUSTOMER_TYPE,INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM)+1,(INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM+1)-INSTR(MY_CUSTOMER_TYPE,',',1,ROWNUM))-1))CUST_ID
+								  FROM (SELECT ','||IN_CUSTOMER_TYPE||',' MY_CUSTOMER_TYPE /*FROM DUAL*/)
+								  CONNECT BY LEVEL <(LENGTH(MY_CUSTOMER_TYPE)-LENGTH(REPLACE(MY_CUSTOMER_TYPE,',','')))
+							 )WHERE CUST_ID=CUSTTYPE_ID
+							UNION
+							SELECT -1 /*FROM DUAL*/)
+						AND
+						(CASE WHEN IN_REGION_TYPE IS NULL THEN 'XXX' ELSE TRIM('IN') END) IN(
+							 SELECT SUBSTR(MY_REGION_TYPE,INSTR(MY_REGION_TYPE,',',1,ROWNUM)+1,(INSTR(MY_REGION_TYPE,',',1,ROWNUM+1)-INSTR(MY_REGION_TYPE,',',1,ROWNUM))-1)REGN
+							 FROM (SELECT ','||IN_REGION_TYPE||',' MY_REGION_TYPE /*FROM DUAL*/)
+							CONNECT BY LEVEL <(LENGTH(MY_REGION_TYPE)-LENGTH(REPLACE(MY_REGION_TYPE,',','')))
+							UNION
+							SELECT 'XXX' /*FROM DUAL*/)
+			AND  (case when IN_INDIAN is NULL then -999 else coalesce(PNS_CALL_ISINDIAN,1) end)=(case when IN_INDIAN is NULL then -999 when IN_INDIAN=0 then -1 else 1 end)
+						AND (case when IN_SEARCH_PARAM is NULL then 1 when IN_SEARCH_PARAM=3 then 1 else 0 end)=1
+						AND (case coalesce(IN_QUERY_TYPE,-9) when 2 then 1 when -9 then 1 else 0 end)=1
+						AND (CASE WHEN IN_SERVICE_ID IS NULL THEN -1 ELSE PNS_CALL_RECORDS_SERVICE_ID END ) IN (
+							SELECT SUBSTR(MY_SERVICE_ID,INSTR(MY_SERVICE_ID,',',1,ROWNUM)+1,(INSTR(MY_SERVICE_ID,',',1,ROWNUM+1)-INSTR(MY_SERVICE_ID,',',1,ROWNUM))-1)REGN
+							FROM (SELECT ','||IN_SERVICE_ID||',' MY_SERVICE_ID /*FROM DUAL*/)
+							CONNECT BY LEVEL <(LENGTH(MY_SERVICE_ID)-LENGTH(REPLACE(MY_SERVICE_ID,',','')))
+							UNION
+							SELECT '-1' /*FROM DUAL*/
+							)
+				)
+			)
+			Where (case when In_Enq_Cnt_From is Null then 1 else Tot_Glusr_Enq_Cnt end) >= (case when In_Enq_Cnt_From is Null then 1 else In_Enq_Cnt_From end)
+			AND  (case when IN_ENQ_CNT_TO is NULL then 1 else TOT_GLUSR_ENQ_CNT end) <= (case when IN_ENQ_CNT_TO is NULL then 1 else IN_ENQ_CNT_TO end)
+			GROUP BY QUERY_MODID,TO_CHAR(DATE_R,'MON-YYYY'),TO_CHAR(DATE_R,'YYYY'),TO_CHAR(DATE_R,'MM'),DIR_QUERY_SERVICE_ID
+			ORDER BY TO_CHAR(DATE_R,'YYYY'), TO_CHAR(DATE_R,'MM'),DIR_QUERY_SERVICE_ID;
+		END IF;
+	END IF;
+END;
+$$
+language plpgsql;

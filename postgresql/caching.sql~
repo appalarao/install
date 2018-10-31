@@ -1,0 +1,70 @@
+--from disk
+Buffers: shared read
+
+
+--from cache
+Buffers: shared hit
+
+explain (analyze,buffers) 
+
+
+Limit  (cost=207.90..5764.64 rows=1 width=12) (actual time=6.429..115.790 rows=50 loops=1)
+   Buffers: shared hit=107489
+   ->  Nested Loop Left Join  (cost=207.90..5764.64 rows=1 width=12) (actual time=6.428..115.777 rows=50 loops=1)
+         Join Filter: ((gl_country_image_mw.fk_gl_country_iso)::text = dir_query.dir_query_sndr_country_iso)
+         Rows Removed by Join Filter: 11989
+         Buffers: shared hit=107489
+         ->  Nested Loop Left Join  (cost=207.90..5753.54 rows=1 width=30) (actual time=6.353..111.585 rows=50 loops=1)
+               Join Filter: (dir_query.query_id = dir_query_reply.fk_dir_query_id)
+               Rows Removed by Join Filter: 25743
+               Buffers: shared hit=107242
+               ->  Nested Loop Left Join  (cost=0.56..5208.51 rows=1 width=30) (actual time=1.705..3.965 rows=50 loops=1)
+                     Filter: ((COALESCE(glusr_folder_to_dir_query.query_type, 'W'::text) = 'W'::text) AND (CASE WHEN (COALESCE(glusr_folder_to_dir_query.fk_glusr_mail_folder_id, '1'::numeric) <> '6'::nume
+ric) THEN COALESCE(glusr_folder_to_dir_query.fk_glusr_mail_folder_id, '1'::numeric) ELSE '1'::numeric END = '1'::numeric))
+                     Buffers: shared hit=301
+                     ->  Append  (cost=0.00..5202.90 rows=2 width=40) (actual time=1.688..3.371 rows=50 loops=1)
+                           Buffers: shared hit=101
+                           ->  Seq Scan on dir_query  (cost=0.00..0.00 rows=1 width=64) (actual time=0.010..0.010 rows=0 loops=1)
+                                 Filter: ((fk_interest_type_id IS NULL) AND (query_rcv_glusr_usr_id = '236'::numeric) AND ((query_rcv_glusr_usr_id % '100'::numeric) = '36'::numeric) AND (1 = CASE dir_quer
+y_sndr_country_iso WHEN 'IN'::text THEN 1 ELSE 0 END))
+                           ->  Bitmap Heap Scan on dir_query_36  (cost=58.86..5202.90 rows=1 width=17) (actual time=1.677..3.348 rows=50 loops=1)
+                                 Recheck Cond: (query_rcv_glusr_usr_id = '236'::numeric)
+                                 Filter: ((fk_interest_type_id IS NULL) AND ((query_rcv_glusr_usr_id % '100'::numeric) = '36'::numeric) AND (1 = CASE dir_query_sndr_country_iso WHEN 'IN'::text THEN 1 ELSE
+ 0 END))
+                                 Rows Removed by Filter: 7
+                                 Heap Blocks: exact=78
+                                 Buffers: shared hit=101
+                                 ->  Bitmap Index Scan on idx_dir_q_recv_id_36  (cost=0.00..58.86 rows=4711 width=0) (actual time=0.954..0.954 rows=5244 loops=1)
+                                       Index Cond: (query_rcv_glusr_usr_id = '236'::numeric)
+                                       Buffers: shared hit=23
+                     ->  Index Scan using glfoltoquery_query_id_idx_new on glusr_folder_to_dir_query  (cost=0.56..2.79 rows=1 width=15) (actual time=0.010..0.010 rows=0 loops=50)
+                           Index Cond: (dir_query.query_id = fk_dir_query_id)
+                           Filter: ((fk_glusr_usr_id = '236'::numeric) AND (query_type = 'W'::text))
+                           Buffers: shared hit=200
+               ->  Nested Loop  (cost=207.33..542.77 rows=181 width=8) (actual time=0.036..2.057 rows=515 loops=50)
+                     Buffers: shared hit=106941
+                     ->  HashAggregate  (cost=206.90..208.71 rows=181 width=56) (actual time=0.032..0.151 rows=515 loops=50)
+                           Group Key: dir_query_reply.fk_dir_query_id
+                           Buffers: shared hit=590
+                           ->  Bitmap Heap Scan on dir_query_reply  (cost=4.51..206.00 rows=181 width=14) (actual time=0.187..1.255 rows=639 loops=1)
+                                 Recheck Cond: ((fk_glusr_usr_sender_id = '236'::numeric) OR (fk_glusr_usr_receiver_id = '236'::numeric))
+                                 Heap Blocks: exact=581
+                                 Buffers: shared hit=590
+                                 ->  BitmapOr  (cost=4.51..4.51 rows=181 width=0) (actual time=0.123..0.123 rows=0 loops=1)
+                                       Buffers: shared hit=9
+                                       ->  Bitmap Index Scan on dirqrply_sndindx1  (cost=0.00..2.85 rows=175 width=0) (actual time=0.108..0.108 rows=601 loops=1)
+                                             Index Cond: (fk_glusr_usr_sender_id = '236'::numeric)
+                                             Buffers: shared hit=6
+                                       ->  Bitmap Index Scan on dirqrply_rcvindx1  (cost=0.00..1.58 rows=6 width=0) (actual time=0.015..0.015 rows=39 loops=1)
+                                             Index Cond: (fk_glusr_usr_receiver_id = '236'::numeric)
+                                             Buffers: shared hit=3
+                     ->  Index Only Scan using dir_query_reply_new_pkey on dir_query_reply b  (cost=0.43..1.84 rows=1 width=6) (actual time=0.003..0.003 rows=1 loops=25750)
+                           Index Cond: (dir_query_reply_id = (max(dir_query_reply.dir_query_reply_id)))
+                           Heap Fetches: 5500
+                           Buffers: shared hit=106351
+         ->  Seq Scan on gl_country_image_mw  (cost=0.00..7.44 rows=244 width=3) (actual time=0.002..0.026 rows=241 loops=50)
+               Buffers: shared hit=247
+ Planning time: 48.614 ms
+ Execution time: 115.907 ms
+(55 rows)
+

@@ -1,0 +1,148 @@
+white-listing
+--------------
+
+node-1:  10.0.2.4
+	sudo iptables -A INPUT -p tcp -s 10.0.2.15   -m multiport --dports 5432,6432 -m state --state NEW,ESTABLISHED -j ACCEPT
+
+	sudo iptables -L
+
+node-2:  10.0.2.15
+	sudo iptables -A INPUT -p tcp -s 10.0.2.4   -m multiport --dports 5432,6432 -m state --state NEW,ESTABLISHED -j ACCEPT
+	sudo iptables -L
+
+
+
+
+
+
+
+
+reference
+
+https://wiki.postgresql.org/wiki/Streaming_Replication
+
+masster node
+------------
+create directory to store archive files on master node:
+-------------------------------------------------------
+sudo mkdir /var/lib/pgsql/9.6/data/wal_archives_loc
+
+sudo chown -R postgres:postgres /var/lib/pgsql/9.6/data/wal_archives_loc
+
+edit postgresql.conf:
+-------------------
+
+listen_addresses = '*'
+
+archive_mode = on
+
+archive_command = 'cp "%p" /var/lib/pgsql/9.6/data/wal_archives_loc/"%f"'
+
+archive_command = 'cp "%p" /wal_files/"%f"'
+
+wal_level = 'hot_standby' 
+
+max_wal_senders = 100  --sending processes
+
+wal_keep_segments = 2000 --max arch. files to keep  
+
+
+
+create user/alter user for replication
+=======================================
+CREATE ROLE indiamart WITH REPLICATION PASSWORD 'password' LOGIN
+or 
+ALTER USER indiamart REPLICATION
+
+pg_hba.conf
+------------
+TYPE  DATABASE        USER            ADDRESS                 METHOD
+host  replication     indiamart     slave-node/32              md5
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+slave-node
+-----------
+sudo systemctl stop postgresql
+
+sudo rm -rf /var/lib/pgsql/9.6/main/
+sudo rm -rf /var/lib/pgsql/9.6/data/--cent os 
+sudo rm -rf /var/lib/pgsql/10/data/
+inital back_up
+--------------
+sudo su postgres
+
+pg_basebackup -h master-ip -D /var/lib/pgsql/9.6/data/ -U replication --xlog-method=stream
+
+or
+
+pg_basebackup -h 63.251.238.68 -U indiamart -D /opt1/postgres/data -X stream --progress --verbose -c fast
+
+pg_basebackup -h 10.142.0.2 -U bheri -D /var/lib/pgsql/10/data/ -X stream --progress --verbose -c fast
+
+
+
+iptables -A INPUT -p tcp -s 35.227.25.145 -m multiport --dports 5432,7000,9042 -m state --state NEW,ESTABLISHED -j ACCEPT
+
+
+
+iptables -A INPUT -p tcp -s 35.231.210.105   -m multiport --dports 5432,7000,9042 -m state --state NEW,ESTABLISHED -j ACCEPT
+iptables -L
+
+
+
+
+postgresql.conf
+---------------
+
+
+hot_standby=on
+
+wal_level = 'hot_standby'
+
+
+
+
+intial back-up from data-directory of master node
+==================================================
+pg_basebackup -h 192.168.0.10(master node) -D /var/lib/postgresql/9.6/main -U replication --xlog-method=stream
+or
+pg_basebackup -h 63.251.238.68 -U indiamart -D /opt1/postgres/data -X stream --progress --verbose -c fast
+
+
+
+
+getting data from wal_files_location
+====================================
+
+--create recovery.conf file in data directory
+
+sudo vim /var/lib/pgsql/9.6/main/recovery.conf
+
+recovery.conf
+---------------
+standby_mode='on'
+
+primary_conninfo='host=master-node port=5432 user=indiamart password=1234'
+
+trigger_file ='/var/lib/pgsql/9.6/trigger'  #fail over when master is fail this will acts as master
+
+restore_command='cp /var/lib/pgsql/9.6/data/wal_archives_loc/%f "%p"'   #copies from archive directory
+
+
+
+
+sudo systemctl start postgresql
+

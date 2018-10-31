@@ -1,0 +1,26 @@
+git clone https://github.com/haribheri/db_installation.git
+
+git init
+git add *
+git commit -m "first commit"
+git remote add bheri https://github.com/haribheri/oracle_client.git
+git push -u bheri
+
+
+
+git clone https://github.com/appalarao/db_installations.git
+git init
+git add *
+git commit -m "first commit"
+git remote add origin https://github.com/appalarao/db_installations.git
+git push -u origin master
+
+
+
+https://github.com/appalarao/install.git
+
+git init
+git add README.md
+git commit -m "first commit"
+git remote add origin https://github.com/appalarao/install.git
+git push -u origin master

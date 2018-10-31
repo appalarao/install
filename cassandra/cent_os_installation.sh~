@@ -1,0 +1,162 @@
+Install Java:
+=============
+wget --no-cookies --no-check-certificate --header "Cookie:oraclelicense=accept-securebackup-cookie" "http://download.oracle.com/otn-pub/java/jdk/8u131-b11/d54c1d3a095b4ff2b6607d096fa80163/jdk-8u131-linux-x64.rpm"
+
+yum -y localinstall jdk-8u131-linux-x64.rpm
+
+add at the end of the file:
+==========================
+vi ~/.bash_profile
+
+export JAVA_HOME=/usr/java/jdk1.8.0_131/
+export JRE_HOME=/usr/java/jdk1.8.0_131/jre
+
+#load config_file
+source ~/.bash_profile
+
+
+
+
+apache-cassandra
+================
+vi /etc/yum.repos.d/cassandra.repo
+
+
+[cassandra]
+name=Apache Cassandra
+baseurl=https://www.apache.org/dist/cassandra/redhat/311x/
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://www.apache.org/dist/cassandra/KEYS
+
+
+yum -y install cassandra
+
+systemctl daemon-reload
+
+systemctl start cassandra
+
+systemctl enable cassandra
+===========================================================================
+datastax cassandra
+==================
+vim /etc/yum.repos.d/datastax.repo
+
+#community version
+[datastax]
+name = DataStax Repo for Apache Cassandra
+baseurl = http://rpm.datastax.com/community
+enabled = 1
+gpgcheck = 0
+
+
+#enterprise edition
+[datastax] 
+name = DataStax Repo for DataStax Enterprise
+baseurl=https://dsa_email_address:password@rpm.datastax.com/enterprise
+enabled=1
+gpgcheck=0
+
+
+yum -y install dsc20
+
+systemctl start cassandra
+
+systemctl enable cassandra
+
+==============================================================================
+
+Cluster formation
+=================
+
+service cassandra stop
+
+rm -rf /var/lib/cassandra/data/system/*
+
+dc-1
+====
+
+cluster_name: 'bheri_Cluster'
+num_tokens: 256
+seed_provider:
+    - class_name: org.apache.cassandra.locator.SimpleSeedProvider
+        - seeds: 10.142.0.2,10.142.0.3
+listen_address: 10.142.0.2
+rpc_address: 10.142.0.2
+endpoint_snitch: GossipingPropertyFileSnitch
+
+
+cluster_name: 'bheri_Cluster'
+num_tokens: 256
+seed_provider:
+    - class_name: org.apache.cassandra.locator.SimpleSeedProvider
+        - seeds: 10.142.0.2,10.142.0.3
+listen_address: 10.142.0.3
+rpc_address: 10.142.0.3
+endpoint_snitch: GossipingPropertyFileSnitch
+
+
+cluster_name: 'bheri_Cluster'
+num_tokens: 256
+seed_provider:
+    - class_name: org.apache.cassandra.locator.SimpleSeedProvider
+        - seeds: 10.142.0.2,10.142.0.3
+listen_address: 10.142.0.4
+rpc_address: 10.142.0.4
+endpoint_snitch: GossipingPropertyFileSnitch
+
+
+dc-2
+====
+
+cluster_name: 'bheri_Cluster'
+num_tokens: 256
+seed_provider:
+    - class_name: org.apache.cassandra.locator.SimpleSeedProvider
+        - seeds: 10.142.0.4,10.142.0.5
+listen_address: 10.142.0.5
+rpc_address: 10.142.0.5
+endpoint_snitch: GossipingPropertyFileSnitch
+
+cluster_name: 'bheri_Cluster'
+num_tokens: 256
+seed_provider:
+    - class_name: org.apache.cassandra.locator.SimpleSeedProvider
+        - seeds: 10.142.0.4,10.142.0.5
+listen_address: 10.142.0.6
+rpc_address: 10.142.0.6
+endpoint_snitch: GossipingPropertyFileSnitch
+
+cluster_name: 'bheri_Cluster'
+num_tokens: 256
+seed_provider:
+    - class_name: org.apache.cassandra.locator.SimpleSeedProvider
+        - seeds: 10.142.0.5,10.142.0.6
+listen_address: 10.142.0.7
+rpc_address: 10.142.0.7
+endpoint_snitch: GossipingPropertyFileSnitch
+
+
+
+dc-3
+====
+
+cluster_name: 'bheri_Cluster'
+num_tokens: 256
+seed_provider:
+    - class_name: org.apache.cassandra.locator.SimpleSeedProvider
+        - seeds: 10.142.0.8,10.142.0.9
+listen_address: 10.142.0.8
+rpc_address: 10.142.0.8
+endpoint_snitch: GossipingPropertyFileSnitch
+
+
+cluster_name: 'bheri_Cluster'
+num_tokens: 256
+seed_provider:
+    - class_name: org.apache.cassandra.locator.SimpleSeedProvider
+        - seeds: 10.142.0.8,10.142.0.9
+listen_address: 10.142.0.9
+rpc_address: 10.142.0.9
+endpoint_snitch: GossipingPropertyFileSnitch
+

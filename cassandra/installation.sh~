@@ -1,0 +1,90 @@
+sudo apt-get install default-jdk
+
+echo "deb http://www.apache.org/dist/cassandra/debian 36x main" | sudo tee -a /etc/apt/sources.list.d/cassandra.list
+
+gpg --keyserver pgp.mit.edu --recv-keys 749D6EEC0353B12C
+gpg --export --armor 749D6EEC0353B12C | sudo apt-key add -
+
+sudo apt-get update
+
+sudo apt-get install cassandra
+
+
+install cassandra-python driver:
+-------------------------------
+sudo apt install python-pip
+pip install cassandra-driver
+export CQLSH_NO_BUNDLED=true
+
+
+cassandra-env.sh
+JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=10.0.2.15"
+
+
+Cassandra-cluster:
+=================
+export CQLSH_NO_BUNDLED=true
+
+sudo service cassandra stop
+
+sudo rm -rf /var/lib/cassandra/data/system/*
+
+whitelisting the servers:
+-------------------------
+	node-1:  10.0.2.4
+		sudo iptables -A INPUT -p tcp -s 10.0.2.15   -m multiport --dports 7000,9042 -m state --state NEW,ESTABLISHED -j ACCEPT
+
+		sudo iptables -L
+
+	node-2:  10.0.2.15
+		sudo iptables -A INPUT -p tcp -s 10.0.2.4   -m multiport --dports 7000,9042 -m state --state NEW,ESTABLISHED -j ACCEPT
+		sudo iptables -L
+
+sudo service cassandra stop
+
+node-1:
+
+cluster_name: 'bheri_cluster'  
+num_tokens: 256  
+seed_provider:  
+    - class_name: org.apache.cassandra.locator.SimpleSeedProvider
+      parameters:
+          - seeds: "10.0.2.15,10.0.2.4"
+
+listen_address: 10.0.2.4
+broadcast_address: 10.0.2.4
+rpc_address: 0.0.0.0  
+broadcast_rpc_address: 10.0.2.4
+
+node-2:
+
+cluster_name: 'bheri_cluster'  
+num_tokens: 256  
+seed_provider:  
+    - class_name: org.apache.cassandra.locator.SimpleSeedProvider
+      parameters:
+          - seeds: "10.0.2.15,10.0.2.4"
+
+listen_address: 10.0.2.15
+broadcast_address: 10.0.2.15
+rpc_address: 0.0.0.0  
+broadcast_rpc_address: 10.0.2.15
+
+sudo service cassandra start
+
+
+
+
+#########################################################################################################
+vi /etc/cassandra/default.conf/cassandra-env.sh
+
+Now find the following line in configuration.
+# JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=<public name>"
+Uncomment the line and change its value form <public_name> to the localhost IP address 127.0.0.1.
+The configuration should look like shown below.
+JVM_OPTS="$JVM_OPTS -Djava.rmi.server.hostname=127.0.0.1"
+Save the file and exit from editor, restart Apache Cassandra by running the following command.
+systemctl restart cassandra
+
+
+
