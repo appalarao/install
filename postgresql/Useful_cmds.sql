@@ -35,7 +35,7 @@ coping db/data (with in same server:)
 CREATE DATABASE temp WITH TEMPLATE bheri;
 
 
-create database bheri owner=indiamart
+create database bheri owner=srihari
 ========================================
 pg_dump bheri > bheri.sql
 =================================
@@ -50,22 +50,18 @@ psql -d ahri  -f bheri.sql
 	pg_dump -U user_name -O db_name file.sql  (copy to file)
 
 
-pg_dump -U indiamart -O bheri bheri.sql
+pg_dump -U appalarao -O bheri bheri.sql
 
 	copy file.sql to desired server.
 
 	psql -U user_name -d db_name -f sourcedb.sql  (copyfrom file)
 
-pg_dump -t glusr_usr imbuyreq -U indiamart -W > bheri_new.sql
-pg_dump --schema-only -t glusr_usr -t c2c_records -t iil_inbox_enquiry -t pns_call_records imbuyreq -U indiamart -W > bheri_new.sql
-
-psql -U indiamart -d bheri -f bheri_new.sql
 
 From csv file to table:
 =========================
 \copy glusr_usr from '/opt2/csv_files/bheri.csv' DELIMITER ',' null as ' ' csv ;
 
-COPY "glusr_contactbook" TO '/opt1/edb_ppas/PostgresPlus/9.5AS/glusr_contactbook.csv';
+COPY "glusr_contactbook" TO '/bheri/new.csv';
 
 
 to reload config files:
@@ -94,7 +90,7 @@ SELECT pg_size_pretty (pg_tablespace_size ('pg_default'));
 
 --SIZE OF PARTITION TABLE
 
-select sum(to_number(pg_size_pretty(pg_total_relation_size(inhrelid::regclass)),'999999999')) from pg_inherits where inhparent='glusr_contactbook'::regclass;
+select sum(to_number(pg_size_pretty(pg_total_relation_size(inhrelid::regclass)),'999999999')) from pg_inherits where inhparent='bheri'::regclass;
 
 
 
@@ -218,7 +214,7 @@ CREATE SERVER bheri_serv FOREIGN DATA WRAPPER postgres_fdw OPTIONS (dbname 'test
 
 CREATE USER MAPPING for bheri(postgres-user) SERVER bheri_serv OPTIONS (user 'bheri', password '1234');
 
-CREATE USER MAPPING for INDIAMART SERVER edb OPTIONS (user 'indiamart', password 'blalrtdb4iil');
+CREATE USER MAPPING for bheri SERVER edb OPTIONS (user 'appalarao', password '1234');
 
 CREATE FOREIGN TABLE bheri(id integer) SERVER bheri_serv OPTIONS (table_name 'bheri');
 
@@ -240,22 +236,20 @@ Oracle foreign-data-wraper
 ==============================
 CREATE EXTENSION oracle_fdw;
 
-CREATE SERVER ENQ_Readonly FOREIGN DATA WRAPPER oracle_fdw OPTIONS (dbserver '//ora17-dl.intermesh.net/imenq');
+CREATE SERVER bheri_new FOREIGN DATA WRAPPER oracle_fdw OPTIONS (dbserver '//1.2.3.4/bheri');
 
-GRANT USAGE ON FOREIGN SERVER ENQ_Readonly TO indiamart;
+GRANT USAGE ON FOREIGN SERVER bheri_new TO appalarao;
 
-CREATE USER MAPPING FOR indiamart SERVER ENQ_Readonly OPTIONS (user 'imenq', password 'enqdb4iil');
+CREATE USER MAPPING FOR appalarao SERVER bheri_new OPTIONS (user 'rama', password '1234');
 
-CREATE FOREIGN TABLE QUOTATIONS_ATTACHMENT
+CREATE FOREIGN TABLE Emp_ft
 (
-QUOTATIONS_ATTACHMENT_ID  numeric(10) NOT NULL,
-FK_IIL_RFQ_QUOTATION_ID      numeric(10) NOT NULL,
-DATE_UPLOAD             timestamp without time zone,
-IIL_RFQ_QUOTATION_ATTACHMENT text not null
-) 
-SERVER ENQ_Readonly OPTIONS (table 'QUOTATIONS_ATTACHMENT');
+adate             timestamp without time zone,
 
-select t.relname,l.locktype,page,virtualtransaction,pid,mode,granted from pg_locks l, pg_stat_all_tables t where l.relation=t.relid and t.relname='eto_unsold_dir_query_mvw' order by relation asc;
+) 
+SERVER bheri_new OPTIONS (table 'EMP');
+
+select t.relname,l.locktype,page,virtualtransaction,pid,mode,granted from pg_locks l, pg_stat_all_tables t where l.relation=t.relid and t.relname='bheri_mw' order by relation asc;
 
 select t.relname,l.locktype,page,virtualtransaction,pid,transactionid,mode,granted from pg_locks l, pg_stat_all_tables t where l.relation=t.relid and lower(mode) like '%exclusive%' order by relation asc;
 
@@ -295,21 +289,14 @@ CREATE SEQUENCE seq_glusr_contact_labels
   MAXVALUE 9223372036854775807
   START 1;
 
-ALTER TABLE glusr_contact_labels ALTER COLUMN glusr_contact_label_id SET DEFAULT nextval('seq_glusr_contact_labels');
+ALTER TABLE glusr_contact_labels ALTER COLUMN glusr_contact_label_id SET DEFAULT nextval('seq_bheri');
 
 
-ALTER TABLE IIL_INBOX_ENQUIRY ALTER COLUMN iil_enquiry_thread_count SET DEFAULT 1;
-
-
-ALTER TABLE message_center_detail alter column message_attachment5_url type character varying(1000)
-
-insert into glusr_contact_labels (fk_glusr_usr_id, glusr_contact_label_name, fk_iil_color_master_id) values(53701209, 'follow-up', 2);
-
-grant execute on function fn_get_snippet() to enquiry;
-GRANT USAGE, SELECT ON SEQUENCE seq_glusr_contact_labels TO enquiry;
+grant execute on function fn_get_deatils() to rao;
+GRANT USAGE, SELECT ON SEQUENCE seq_bheri TO rao;
 ALTER TABLE pns_call_records OWNER TO pns;
 --grant on fdw-server
-CREATE USER MAPPING FOR enquiry SERVER enq_r OPTIONS (user 'imenq', password 'enqdb4iil');
+CREATE USER MAPPING FOR enquiry SERVER bheri OPTIONS (user 'emp', password '1234');
 
 terminal view:
 ==============
@@ -344,10 +331,10 @@ ORDER BY
 =======================================================================
 
 
-VACUUM (FULL, VERBOSE, ANALYZE) dir_query_reply
+VACUUM (FULL, VERBOSE, ANALYZE) emp
 it will shrink both table and accociated index by deleting dead tuples;
 
-select * from pg_stat_user_tables where relname='dir_query_reply';
+select * from pg_stat_user_tables where relname='emp';
 
 REINDEX INDEX my_index;
 
